@@ -22,7 +22,7 @@
 #include <tuple>
 
 namespace Envoy {
-namespace Http {
+namespace Utils {
 namespace JwtAuth {
 
 class DatasetPem {
@@ -366,6 +366,7 @@ class JwtTest : public testing::Test {
     } else {
       ASSERT_TRUE(0);
     }
+    EXPECT_EQ(jwt.Str(), jwt_str);
     EXPECT_EQ(verified, v.Verify(jwt, *key));
     EXPECT_EQ(status, v.GetStatus());
     if (verified) {
@@ -548,5 +549,5 @@ TEST_F(JwtTestJwks, JwkBadPublicKey) {
 }
 
 }  // namespace JwtAuth
-}  // namespace Http
+}  // namespace Utils
 }  // namespace Envoy

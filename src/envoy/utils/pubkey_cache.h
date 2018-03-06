@@ -19,11 +19,11 @@
 #include <chrono>
 #include <unordered_map>
 
-#include "src/envoy/http/jwt_auth/config.pb.h"
-#include "src/envoy/http/jwt_auth/jwt.h"
+#include "src/envoy/utils/config.pb.h"
+#include "src/envoy/utils/jwt.h"
 
 namespace Envoy {
-namespace Http {
+namespace Utils {
 namespace JwtAuth {
 namespace {
 // Default cache expiration time in 5 minutes.
@@ -98,8 +98,8 @@ class PubkeyCacheItem {
 class PubkeyCache {
  public:
   // Load the config from envoy config.
-  PubkeyCache(const Config::AuthFilterConfig& config) {
-    for (const auto& jwt : config.jwts()) {
+  PubkeyCache(const std::vector<Envoy::Utils::Config::JWT>& config) {
+    for (const auto& jwt : config) {
       pubkey_cache_map_.emplace(jwt.issuer(), jwt);
     }
   }
@@ -119,7 +119,7 @@ class PubkeyCache {
 };
 
 }  // namespace JwtAuth
-}  // namespace Http
+}  // namespace Utils
 }  // namespace Envoy
 
 #endif  // JWT_AUTH_PUBKEY_CACHE_H

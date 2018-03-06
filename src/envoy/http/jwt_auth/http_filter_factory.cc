@@ -16,8 +16,8 @@
 #include "src/envoy/http/jwt_auth/http_filter.h"
 #include "envoy/registry/registry.h"
 #include "google/protobuf/util/json_util.h"
-#include "src/envoy/http/jwt_auth/auth_store.h"
-#include "src/envoy/http/jwt_auth/config.pb.validate.h"
+#include "src/envoy/utils/auth_store.h"
+#include "src/envoy/utils/config.pb.validate.h"
 
 namespace Envoy {
 namespace Server {
@@ -28,7 +28,7 @@ class JwtVerificationFilterConfig : public NamedHttpFilterConfigFactory {
   HttpFilterFactoryCb createFilterFactory(const Json::Object& config,
                                           const std::string&,
                                           FactoryContext& context) override {
-    Http::JwtAuth::Config::AuthFilterConfig proto_config;
+    Utils::Config::AuthFilterConfig proto_config;
     MessageUtil::loadFromJson(config.asJsonString(), proto_config);
     return createFilter(proto_config, context);
   }
@@ -38,29 +38,30 @@ class JwtVerificationFilterConfig : public NamedHttpFilterConfigFactory {
       FactoryContext& context) override {
     return createFilter(
         MessageUtil::downcastAndValidate<
-            const Http::JwtAuth::Config::AuthFilterConfig&>(proto_config),
+            const Utils::Config::AuthFilterConfig&>(proto_config),
         context);
   }
 
   ProtobufTypes::MessagePtr createEmptyConfigProto() override {
     return ProtobufTypes::MessagePtr{
-        new Http::JwtAuth::Config::AuthFilterConfig};
+        new Utils::Config::AuthFilterConfig};
   }
 
   std::string name() override { return "jwt-auth"; }
 
  private:
   HttpFilterFactoryCb createFilter(
-      const Http::JwtAuth::Config::AuthFilterConfig& proto_config,
+      const Utils::Config::AuthFilterConfig& proto_config,
       FactoryContext& context) {
-    auto store_factory = std::make_shared<Http::JwtAuth::JwtAuthStoreFactory>(
-        proto_config, context);
+    Utils::JwtAuth::JwtList_t jwts(proto_config.jwts().begin(), proto_config.jwts().end());
+    auto store_factory = std::make_shared<Utils::JwtAuth::JwtAuthStoreFactory>(jwts, context);
     Upstream::ClusterManager& cm = context.clusterManager();
-    return [&cm, store_factory](
+    auto &bypass_jwt = proto_config.bypass_jwt();
+    return [&cm, store_factory, bypass_jwt](
                Http::FilterChainFactoryCallbacks& callbacks) -> void {
       callbacks.addStreamDecoderFilter(
           std::make_shared<Http::JwtVerificationFilter>(
-              cm, store_factory->store()));
+              cm, store_factory->store(), bypass_jwt));
     };
   }
 };

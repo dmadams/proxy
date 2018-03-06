@@ -32,7 +32,7 @@
 #include <vector>
 
 namespace Envoy {
-namespace Http {
+namespace Utils {
 namespace JwtAuth {
 
 std::string StatusToString(Status status) {
@@ -42,6 +42,7 @@ std::string StatusToString(Status status) {
       {Status::BEARER_PREFIX_MISMATCH,
        "Authorization header value doesn't have Bearer prefix"},
       {Status::JWT_EXPIRED, "JWT is expired"},
+      {Status::JWT_NOT_VALID_YET, "JWT not valid yet"},
       {Status::JWT_BAD_FORMAT, "JWT_BAD_FORMAT"},
       {Status::JWT_HEADER_PARSE_ERROR, "JWT_HEADER_PARSE_ERROR"},
       {Status::JWT_HEADER_NO_ALG, "JWT_HEADER_NO_ALG"},
@@ -212,7 +213,7 @@ class EvpPkeyGetter : public WithStatus {
 
 }  // namespace
 
-Jwt::Jwt(const std::string &jwt) {
+Jwt::Jwt(const std::string &jwt) : original_(jwt) {
   // jwt must have exactly 2 dots
   if (std::count(jwt.begin(), jwt.end(), '.') != 2) {
     UpdateStatus(Status::JWT_BAD_FORMAT);
@@ -279,6 +280,7 @@ Jwt::Jwt(const std::string &jwt) {
   iss_ = payload_->getString("iss", "");
   sub_ = payload_->getString("sub", "");
   exp_ = payload_->getInteger("exp", 0);
+  nbf_ = payload_->getInteger("nbf", 0);
 
   // "aud" can be either string array or string.
   // Try as string array, read it as empty array if doesn't exist.
@@ -303,6 +305,10 @@ Jwt::Jwt(const std::string &jwt) {
     UpdateStatus(Status::JWT_SIGNATURE_PARSE_ERROR);
     return;
   }
+}
+
+const std::string &Jwt::Str() const {
+  return original_;
 }
 
 bool Verifier::VerifySignature(EVP_PKEY *key, const EVP_MD *md,
@@ -370,22 +376,23 @@ bool Verifier::Verify(const Jwt &jwt, const Pubkeys &pubkeys) {
 }
 
 // Returns the parsed header.
-Json::ObjectSharedPtr Jwt::Header() { return header_; }
+const Json::ObjectSharedPtr Jwt::Header() const { return header_; }
 
-const std::string &Jwt::HeaderStr() { return header_str_; }
-const std::string &Jwt::HeaderStrBase64Url() { return header_str_base64url_; }
-const std::string &Jwt::Alg() { return alg_; }
-const std::string &Jwt::Kid() { return kid_; }
+const std::string &Jwt::HeaderStr() const { return header_str_; }
+const std::string &Jwt::HeaderStrBase64Url() const { return header_str_base64url_; }
+const std::string &Jwt::Alg() const { return alg_; }
+const std::string &Jwt::Kid() const { return kid_; }
 
 // Returns payload JSON.
-Json::ObjectSharedPtr Jwt::Payload() { return payload_; }
+const Json::ObjectSharedPtr Jwt::Payload() const { return payload_; }
 
-const std::string &Jwt::PayloadStr() { return payload_str_; }
-const std::string &Jwt::PayloadStrBase64Url() { return payload_str_base64url_; }
-const std::string &Jwt::Iss() { return iss_; }
-const std::vector<std::string> &Jwt::Aud() { return aud_; }
-const std::string &Jwt::Sub() { return sub_; }
-int64_t Jwt::Exp() { return exp_; }
+const std::string &Jwt::PayloadStr() const { return payload_str_; }
+const std::string &Jwt::PayloadStrBase64Url() const { return payload_str_base64url_; }
+const std::string &Jwt::Iss() const { return iss_; }
+const std::vector<std::string> &Jwt::Aud() const { return aud_; }
+const std::string &Jwt::Sub() const { return sub_; }
+int64_t Jwt::Exp() const { return exp_; }
+int64_t Jwt::Nbf() const { return nbf_; }
 
 void Pubkeys::CreateFromPemCore(const std::string &pkey_pem) {
   keys_.clear();
@@ -459,5 +466,5 @@ std::unique_ptr<Pubkeys> Pubkeys::CreateFrom(const std::string &pkey,
 }
 
 }  // namespace JwtAuth
-}  // namespace Http
+}  // namespace Utils
 }  // namespace Envoy

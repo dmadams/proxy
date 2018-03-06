@@ -13,20 +13,17 @@
  * limitations under the License.
  */
 
-#include "src/envoy/http/jwt_auth/jwt_authenticator.h"
+#include "src/envoy/utils/jwt_authenticator.h"
 #include "common/http/message_impl.h"
 #include "common/http/utility.h"
 
 namespace Envoy {
-namespace Http {
+namespace Utils {
 namespace JwtAuth {
 namespace {
 
 // The autorization bearer prefix.
 const std::string kBearerPrefix = "Bearer ";
-
-// The HTTP header to pass verified token payload.
-const LowerCaseString kJwtPayloadKey("sec-istio-auth-userinfo");
 
 // Extract host and path from a URI
 void ExtractUriHostPath(const std::string& uri, std::string* host,
@@ -57,43 +54,46 @@ JwtAuthenticator::JwtAuthenticator(Upstream::ClusterManager& cm,
     : cm_(cm), store_(store) {}
 
 // Verify a JWT token.
-void JwtAuthenticator::Verify(HeaderMap& headers,
+void JwtAuthenticator::Verify(Http::HeaderMap& headers,
                               JwtAuthenticator::Callbacks* callback) {
-  headers_ = &headers;
   callback_ = callback;
 
   ENVOY_LOG(debug, "Jwt authentication starts");
-  const HeaderEntry* entry = headers_->Authorization();
+  const Http::HeaderEntry* entry = headers.Authorization();
   if (!entry) {
-    if (OkToBypass()) {
-      DoneWithStatus(Status::OK);
-    } else {
-      DoneWithStatus(Status::JWT_MISSED);
-    }
+    DoneWithStatus(Status::JWT_MISSED);
     return;
   }
 
   // Extract token from header.
-  const HeaderString& value = entry->value();
+  const Http::HeaderString& value = entry->value();
   if (!StringUtil::startsWith(value.c_str(), kBearerPrefix, true)) {
     DoneWithStatus(Status::BEARER_PREFIX_MISMATCH);
     return;
   }
+  Verify(value.c_str() + kBearerPrefix.length(), callback_);
+}
 
-  // Parse JWT token
-  jwt_.reset(new Jwt(value.c_str() + kBearerPrefix.length()));
+void JwtAuthenticator::Verify(const std::string &jwtStr, Callbacks* callback) {
+  callback_ = callback;
+  jwt_.reset(new Jwt(jwtStr));
   if (jwt_->GetStatus() != Status::OK) {
     DoneWithStatus(jwt_->GetStatus());
     return;
   }
 
-  // Check "exp" claim.
+  // Check "exp" and "nbf" claims.
   const auto unix_timestamp =
       std::chrono::duration_cast<std::chrono::seconds>(
           std::chrono::system_clock::now().time_since_epoch())
           .count();
   if (jwt_->Exp() < unix_timestamp) {
     DoneWithStatus(Status::JWT_EXPIRED);
+    return;
+  }
+  int64_t nbf = jwt_->Nbf();
+  if (nbf > 0 && nbf > unix_timestamp) {
+    DoneWithStatus(Status::JWT_NOT_VALID_YET);
     return;
   }
 
@@ -123,7 +123,7 @@ void JwtAuthenticator::FetchPubkey(PubkeyCacheItem* issuer) {
   std::string host, path;
   ExtractUriHostPath(uri_, &host, &path);
 
-  MessagePtr message(new RequestMessageImpl());
+  Http::MessagePtr message(new Http::RequestMessageImpl());
   message->headers().insertMethod().value().setReference(
       Http::Headers::get().MethodValues.Get);
   message->headers().insertPath().value(path);
@@ -140,7 +140,7 @@ void JwtAuthenticator::FetchPubkey(PubkeyCacheItem* issuer) {
       std::move(message), *this, Optional<std::chrono::milliseconds>());
 }
 
-void JwtAuthenticator::onSuccess(MessagePtr&& response) {
+void JwtAuthenticator::onSuccess(Http::MessagePtr&& response) {
   request_ = nullptr;
   uint64_t status_code = Http::Utility::getResponseStatus(response->headers());
   if (status_code == 200) {
@@ -161,7 +161,7 @@ void JwtAuthenticator::onSuccess(MessagePtr&& response) {
   }
 }
 
-void JwtAuthenticator::onFailure(AsyncClient::FailureReason) {
+void JwtAuthenticator::onFailure(Http::AsyncClient::FailureReason) {
   request_ = nullptr;
   ENVOY_LOG(debug, "fetch pubkey [uri = {}]: failed", uri_);
   DoneWithStatus(Status::FAILED_FETCH_PUBKEY);
@@ -193,44 +193,16 @@ void JwtAuthenticator::VerifyKey(const JwtAuth::Pubkeys& pubkey) {
     DoneWithStatus(v.GetStatus());
     return;
   }
-
-  headers_->addReferenceKey(kJwtPayloadKey, jwt_->PayloadStrBase64Url());
-
-  // Remove JWT from headers.
-  headers_->removeAuthorization();
   DoneWithStatus(Status::OK);
-}
-
-bool JwtAuthenticator::OkToBypass() {
-  for (const auto& bypass : store_.config().bypass_jwt()) {
-    if (headers_->Method() && headers_->Path() &&
-        // Http method should always match
-        bypass.http_method() == headers_->Method()->value().c_str()) {
-      if (!bypass.path_exact().empty() &&
-          bypass.path_exact() == headers_->Path()->value().c_str()) {
-        return true;
-      }
-      if (!bypass.path_prefix().empty() &&
-          StringUtil::startsWith(headers_->Path()->value().c_str(),
-                                 bypass.path_prefix())) {
-        return true;
-      }
-    }
-  }
-  return false;
 }
 
 void JwtAuthenticator::DoneWithStatus(const Status& status) {
   ENVOY_LOG(debug, "Jwt authentication completed with: {}",
             JwtAuth::StatusToString(status));
-  callback_->onDone(status);
+  callback_->onDone(status, status == Status::OK ? jwt_.get() : nullptr);
   callback_ = nullptr;
 }
 
-const LowerCaseString& JwtAuthenticator::JwtPayloadKey() {
-  return kJwtPayloadKey;
-}
-
 }  // namespace JwtAuth
-}  // namespace Http
+}  // namespace Utils
 }  // namespace Envoy

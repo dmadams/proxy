@@ -14,6 +14,7 @@
  */
 
 #include "src/envoy/utils/utils.h"
+#include "src/envoy/utils/constants.h"
 #include "mixer/v1/config/client/client_config.pb.h"
 #include "test/test_common/utility.h"
 
@@ -43,5 +44,10 @@ TEST(UtilsTest, ParseMessageWithUnknownField) {
   EXPECT_OK(ParseJsonMessage(config_str, &http_config));
   EXPECT_EQ(http_config.default_destination_service(),
             "service.svc.cluster.local");
+}
+
+TEST(UtilsTest, CorrectJwtPayloadKey) {
+  Envoy::Http::LowerCaseString expected("sec-istio-auth-userinfo");
+  EXPECT_EQ(expected, Envoy::Utils::Constants::JwtPayloadKey());
 }
 }

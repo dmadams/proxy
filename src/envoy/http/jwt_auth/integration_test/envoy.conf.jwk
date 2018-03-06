@@ -43,6 +43,16 @@
                         "jwks_uri": "http://example.com/foobar_cert",
                         "jwks_uri_envoy_cluster": "example_issuer"
                      }
+                   ],
+                   "bypass_jwt": [
+                    {
+                      "http_method": "OPTIONS",
+                      "path_prefix": "/authless"
+                    },
+                    {
+                      "http_method": "HEAD",
+                      "path_prefix": "/authless"
+                    }
                    ]
                 }
               },

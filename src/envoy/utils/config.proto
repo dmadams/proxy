@@ -14,7 +14,7 @@
 
 syntax = "proto3";
 
-package Envoy.Http.JwtAuth.Config;
+package Envoy.Utils.Config;
 
 import "google/protobuf/duration.proto";
 import "validate/validate.proto";
@@ -122,6 +122,22 @@ message JWT {
   string jwks_uri_envoy_cluster = 7;
 }
 
+// This message defines a pattern to match a HTTP request.
+// A pattern is matched only if both http_method and path_match are matched.
+message HttpPattern {
+  // Define a HTTP method.
+  string http_method = 1;
+
+  // Defines a path match
+  oneof path_match {
+    // Defines an exact path match
+    string path_exact = 2;
+
+    // Defines an path prefix match
+    string path_prefix = 3;
+  }
+}
+
 // Determines how to apply auth policies for individual requests.
 message AuthFilterConfig {
   // List of JWT rules to valide.
@@ -148,22 +164,6 @@ message AuthFilterConfig {
   // include a JWT.
   repeated JWT jwts = 2;
 
-  // This message defines a pattern to match a HTTP request.
-  // A pattern is matched only if both http_method and path_match are matched.
-  message HttpPattern {
-    // Define a HTTP method.
-    string http_method = 1;
-
-    // Defines a path match
-    oneof path_match {
-      // Defines an exact path match
-      string path_exact = 2;
-
-      // Defines an path prefix match
-      string path_prefix = 3;
-    }
-  }
-
   // If a request doesn't have JWT, it will be rejected.
   // But some requests can be forwarded without JWT, such as OPTIONS for CORS
   // and some health checking paths.
@@ -181,4 +181,10 @@ message AuthFilterConfig {
   //      path_exact: /healthz
   //
   repeated HttpPattern bypass_jwt = 3;
+}
+
+// Configuration schema for a session manager.
+message SessionManagerConfig {
+  // The base64 encoded AES-256 key to use to protect session tokens.
+  string key = 1;
 }

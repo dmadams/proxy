@@ -28,6 +28,8 @@ envoy_cc_binary(
         "//src/envoy/http/jwt_auth:http_filter_factory",
         "//src/envoy/http/authn:filter_lib",
         "//src/envoy/http/mixer:filter_lib",
+        "//src/envoy/http/oidc:oidc_filter_config",
+        "//src/envoy/http/xsrf:xsrf_filter_config",
         "//src/envoy/tcp/mixer:filter_lib",
         "@envoy//source/exe:envoy_main_entry_lib",
     ],

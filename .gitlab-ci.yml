@@ -1,0 +1,39 @@
+image: istio/ci:go1.9-bazel0.7
+variables:
+  GIT_SSL_CAPATH: /etc/ssl/certs/
+  BAZEL_TARGET_DIR: "bazel-bin/src/envoy/"
+  IMAGE_NAME: ${CI_REGISTRY_IMAGE}/envoy:${CI_COMMIT_SHA}
+
+stages:
+- build
+- docker
+
+build:
+  stage: build
+  script:
+    - bazel build //src/envoy:envoy
+    - TARGET=$(readlink bazel-bin)
+    - rm -fr bazel-bin
+    - cp -R ${TARGET} bazel-bin
+    - cp gitlab/Dockerfile ${BAZEL_TARGET_DIR}
+  artifacts:
+    paths:
+    - ${BAZEL_TARGET_DIR}
+    expire_in: 1 day
+
+docker:
+  stage: docker
+  image: docker:latest
+  variables:
+    DOCKER_DRIVER: overlay2
+    DOCKER_HOST: tcp://localhost:2375
+  before_script:
+  - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
+  services:
+    - docker:dind
+  dependencies:
+    - build
+  script:
+  - ls ${BAZEL_TARGET_DIR}
+  - docker build -f ${BAZEL_TARGET_DIR}/Dockerfile -t ${IMAGE_NAME} ${BAZEL_TARGET_DIR}
+  - docker push ${IMAGE_NAME}

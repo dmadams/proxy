@@ -14,6 +14,7 @@
  */
 
 #include "src/envoy/http/jwt_auth/http_filter.h"
+#include "src/envoy/utils/constants.h"
 
 #include "common/http/message_impl.h"
 #include "common/http/utility.h"
@@ -27,8 +28,9 @@ namespace Envoy {
 namespace Http {
 
 JwtVerificationFilter::JwtVerificationFilter(Upstream::ClusterManager& cm,
-                                             JwtAuth::JwtAuthStore& store)
-    : jwt_auth_(cm, store) {}
+    Utils::JwtAuth::JwtAuthStore& store,
+    const google::protobuf::RepeatedPtrField<Envoy::Utils::Config::HttpPattern> &bypass_jwt)
+    : jwt_auth_(cm, store), bypass_jwt_(bypass_jwt){}
 
 JwtVerificationFilter::~JwtVerificationFilter() {}
 
@@ -40,9 +42,18 @@ void JwtVerificationFilter::onDestroy() {
 FilterHeadersStatus JwtVerificationFilter::decodeHeaders(HeaderMap& headers,
                                                          bool) {
   ENVOY_LOG(debug, "Called JwtVerificationFilter : {}", __func__);
+  headers_ = &headers;
   state_ = Calling;
   stopped_ = false;
 
+  // Check if the request being made does not require Auth.
+  if (OkToBypass()) {
+    ENVOY_LOG(error, "{} Bypassing authentication check for {} {}",
+        __func__,
+        headers_->Method()->value().c_str(),
+        headers_->Path()->value().c_str());
+    return FilterHeadersStatus::Continue;
+  }
   // Verify the JWT token, onDone() will be called when completed.
   jwt_auth_.Verify(headers, this);
 
@@ -54,23 +65,47 @@ FilterHeadersStatus JwtVerificationFilter::decodeHeaders(HeaderMap& headers,
   return FilterHeadersStatus::StopIteration;
 }
 
-void JwtVerificationFilter::onDone(const JwtAuth::Status& status) {
+bool JwtVerificationFilter::OkToBypass() const {
+  for (const auto& bypass : bypass_jwt_) {
+    if (headers_->Method() && headers_->Path() &&
+        // Http method should always match
+        bypass.http_method() == headers_->Method()->value().c_str()) {
+      if (!bypass.path_exact().empty() &&
+          bypass.path_exact() == headers_->Path()->value().c_str()) {
+        return true;
+      }
+      if (!bypass.path_prefix().empty() &&
+          StringUtil::startsWith(headers_->Path()->value().c_str(),
+                                 bypass.path_prefix())) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+void JwtVerificationFilter::onDone(const Utils::JwtAuth::Status& status, const Utils::JwtAuth::Jwt* jwt) {
   ENVOY_LOG(debug, "Called JwtVerificationFilter : check complete {}",
             int(status));
   // This stream has been reset, abort the callback.
   if (state_ == Responded) {
     return;
   }
-  if (status != JwtAuth::Status::OK) {
+  if (status != Utils::JwtAuth::Status::OK) {
     state_ = Responded;
     // verification failed
     Code code = Code(401);  // Unauthorized
     // return failure reason as message body
     Utility::sendLocalReply(*decoder_callbacks_, false, code,
-                            JwtAuth::StatusToString(status));
+                            Utils::JwtAuth::StatusToString(status));
     return;
   }
 
+  // Add verified header, removed to be processed header.
+  headers_->addReferenceKey(Utils::Constants::JwtPayloadKey(), jwt->PayloadStrBase64Url());
+  // Why remove the Authorization header? Yes it's been validated but other downstream processes may
+  // with to use it later
+  //headers_->removeAuthorization();
   state_ = Complete;
   if (stopped_) {
     decoder_callbacks_->continueDecoding();

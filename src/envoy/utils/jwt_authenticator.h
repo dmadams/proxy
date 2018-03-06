@@ -20,16 +20,16 @@
 #include "envoy/http/async_client.h"
 #include "server/config/network/http_connection_manager.h"
 
-#include "src/envoy/http/jwt_auth/auth_store.h"
+#include "src/envoy/utils/auth_store.h"
 
 namespace Envoy {
-namespace Http {
+namespace Utils {
 namespace JwtAuth {
 
 // A per-request JWT authenticator to handle all JWT authentication:
 // * fetch remote public keys and cache them.
 class JwtAuthenticator : public Logger::Loggable<Logger::Id::filter>,
-                         public AsyncClient::Callbacks {
+                         public Http::AsyncClient::Callbacks {
  public:
   JwtAuthenticator(Upstream::ClusterManager& cm, JwtAuthStore& store);
 
@@ -37,22 +37,21 @@ class JwtAuthenticator : public Logger::Loggable<Logger::Id::filter>,
   class Callbacks {
    public:
     virtual ~Callbacks() {}
-    virtual void onDone(const Status& status) PURE;
+    virtual void onDone(const Status& status, const Jwt* jwt) PURE;
   };
-  void Verify(HeaderMap& headers, Callbacks* callback);
+  void Verify(Http::HeaderMap& headers, Callbacks* callback);
+  void Verify(const std::string &jwtStr, Callbacks* callback);
+
 
   // Called when the object is about to be destroyed.
   void onDestroy();
-
-  // The HTTP header key to carry the verified JWT payload.
-  static const LowerCaseString& JwtPayloadKey();
 
  private:
   // Fetch a remote public key.
   void FetchPubkey(PubkeyCacheItem* issuer);
   // Following two functions are for AyncClient::Callbacks
-  void onSuccess(MessagePtr&& response);
-  void onFailure(AsyncClient::FailureReason);
+  void onSuccess(Http::MessagePtr&& response);
+  void onFailure(Http::AsyncClient::FailureReason);
 
   // Verify with a specific public key.
   void VerifyKey(const JwtAuth::Pubkeys& pubkey);
@@ -63,29 +62,23 @@ class JwtAuthenticator : public Logger::Loggable<Logger::Id::filter>,
   // Calls the callback with status.
   void DoneWithStatus(const Status& status);
 
-  // Return true if it is OK to forward this request without JWT.
-  bool OkToBypass();
-
   // The cluster manager object to make HTTP call.
   Upstream::ClusterManager& cm_;
   // The cache object.
   JwtAuthStore& store_;
   // The JWT object.
   std::unique_ptr<JwtAuth::Jwt> jwt_;
-
-  // The HTTP request headers
-  HeaderMap* headers_{};
   // The on_done function.
   Callbacks* callback_{};
 
   // The pending uri_, only used for logging.
   std::string uri_;
   // The pending remote request so it can be canceled.
-  AsyncClient::Request* request_{};
+  Http::AsyncClient::Request* request_{};
 };
 
 }  // namespace JwtAuth
-}  // namespace Http
+}  // namespace Utils
 }  // namespace Envoy
 
 #endif  // JWT_AUTHENTICATOR_H

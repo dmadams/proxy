@@ -24,7 +24,7 @@
 #include <vector>
 
 namespace Envoy {
-namespace Http {
+namespace Utils {
 namespace JwtAuth {
 
 enum class Status {
@@ -38,6 +38,9 @@ enum class Status {
 
   // Token expired.
   JWT_EXPIRED,
+  
+  // Token not valid yet.
+  JWT_NOT_VALID_YET,
 
   // Given JWT is not in the form of Header.Payload.Signature
   JWT_BAD_FORMAT,
@@ -176,52 +179,61 @@ class Jwt : public WithStatus {
   // the error detail.
   Jwt(const std::string& jwt);
 
+  // It returns the string representation of the original value used to
+  // construct the class.
+  const std::string &Str() const;
+
   // It returns a pointer to a JSON object of the header of the given JWT.
   // When the given JWT has a format error, it returns nullptr.
   // It returns the header JSON even if the signature is invalid.
-  Json::ObjectSharedPtr Header();
+  const Json::ObjectSharedPtr Header() const;
 
   // They return a string (or base64url-encoded string) of the header JSON of
   // the given JWT.
-  const std::string& HeaderStr();
-  const std::string& HeaderStrBase64Url();
+  const std::string& HeaderStr() const;
+  const std::string& HeaderStrBase64Url() const;
 
   // They return the "alg" (or "kid") value of the header of the given JWT.
-  const std::string& Alg();
+  const std::string& Alg() const;
 
   // It returns the "kid" value of the header of the given JWT, or an empty
   // string if "kid" does not exist in the header.
-  const std::string& Kid();
+  const std::string& Kid() const;
 
   // It returns a pointer to a JSON object of the payload of the given JWT.
   // When the given jWT has a format error, it returns nullptr.
   // It returns the payload JSON even if the signature is invalid.
-  Json::ObjectSharedPtr Payload();
+  const Json::ObjectSharedPtr Payload() const;
 
   // They return a string (or base64url-encoded string) of the payload JSON of
   // the given JWT.
-  const std::string& PayloadStr();
-  const std::string& PayloadStrBase64Url();
+  const std::string& PayloadStr() const;
+  const std::string& PayloadStrBase64Url() const;
 
   // It returns the "iss" claim value of the given JWT, or an empty string if
   // "iss" claim does not exist.
-  const std::string& Iss();
+  const std::string& Iss() const;
 
   // It returns the "aud" claim value of the given JWT, or an empty string if
   // "aud" claim does not exist.
-  const std::vector<std::string>& Aud();
+  const std::vector<std::string>& Aud() const;
 
   // It returns the "sub" claim value of the given JWT, or an empty string if
   // "sub" claim does not exist.
-  const std::string& Sub();
+  const std::string& Sub() const;
 
   // It returns the "exp" claim value of the given JWT, or 0 if "exp" claim does
   // not exist.
-  int64_t Exp();
+  int64_t Exp() const;
+  
+  // It returns the "nbf" claim value of the given JWT, or 0 if "nbf" claim does
+  // not exist.
+  int64_t Nbf() const;
 
  private:
   const EVP_MD* md_;
 
+  std::string original_;
   Json::ObjectSharedPtr header_;
   std::string header_str_;
   std::string header_str_base64url_;
@@ -235,6 +247,7 @@ class Jwt : public WithStatus {
   std::vector<std::string> aud_;
   std::string sub_;
   int64_t exp_;
+  int64_t nbf_;
 
   /*
    * TODO: try not to use friend function
@@ -278,7 +291,7 @@ class Pubkeys : public WithStatus {
 };
 
 }  // namespace JwtAuth
-}  // namespace Http
+}  // namespace Utils
 }  // namespace Envoy
 
 #endif  // PROXY_JWT_H

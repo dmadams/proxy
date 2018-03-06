@@ -1,0 +1,71 @@
+// Copyright 2017 Istio Authors
+//
+//   Licensed under the Apache License, Version 2.0 (the "License");
+//   you may not use this file except in compliance with the License.
+//   You may obtain a copy of the License at
+//
+//       http://www.apache.org/licenses/LICENSE-2.0
+//
+//   Unless required by applicable law or agreed to in writing, software
+//   distributed under the License is distributed on an "AS IS" BASIS,
+//   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//   See the License for the specific language governing permissions and
+//   limitations under the License.
+
+syntax = "proto3";
+
+package Envoy.Http.Oidc.Config;
+
+import "src/envoy/utils/config.proto";
+
+// This proto file includes configuration types for
+// the OpenID Connect HTTP filter.
+
+// Configuration for the OpenID Connect filter
+message OidcConfig {
+  // Identity Provider (IdP) specific configuration types.
+  message IdP {
+    // The endpoint for retrieving an identity token.
+    message TokenEndpoint {
+      // The Envoy upstream cluster name.
+      string cluster = 1;
+      // The host/authority of the token endpoint.
+      string host = 2;
+      // The path of the token endpoint.
+      string path = 3;
+    }
+    // JWT verification configuration.
+    Envoy.Utils.Config.JWT jwt_config = 1;
+    // OIDC authentication endpoint URL.
+    string authentication_endpoint = 2;
+    // OIDC token endpoint URL.
+    TokenEndpoint token_endpoint = 3;
+    // The registered client id.
+    string client_id = 4;
+    // The registered client secret.
+    string client_secret = 5;
+  }
+  // A Match maps an incoming request to an IdP based on a specified header field and it's value.
+  // For example the header might be "host" and value "tenant1.acme.com" for selecting tenant1's IdP.
+  message Match {
+    // Criteria for mapping incoming requests to an IdP.
+    message Criteria {
+      // Match by 1) a header and 2) the value of the header
+      string header = 1;
+      string value = 2;
+    }
+    // Details of the registered external Identity Provider (IdP).
+    IdP idp = 2;
+    // Criteria by which to match against
+    Criteria criteria = 3;
+  }
+  // An ordered list of Match rules. If a request can be matched by more than rule then the first in the list will be
+  // chosen.
+  map<string, Match> matches = 1;
+  // The URL that receives an authentication reply from an OIDC provider.
+  string authentication_callback = 2;
+  // The landing page to redirect to after successful authentication.
+  string landing_page = 3;
+  // SessionManager configuration
+  Envoy.Utils.Config.SessionManagerConfig session_manager_config = 5;
+}

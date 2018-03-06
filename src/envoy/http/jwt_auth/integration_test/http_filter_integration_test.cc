@@ -144,7 +144,7 @@ class JwtVerificationFilterIntegrationTest
       request_stream_backend =
           fake_upstream_connection_backend->waitForNewStream(*dispatcher_);
       request_stream_backend->waitForEndStream(*dispatcher_);
-
+      
       EXPECT_TRUE(request_stream_backend->complete());
 
       ExpectHeaderIncluded(expected_headers, request_stream_backend->headers());
@@ -237,6 +237,18 @@ TEST_P(JwtVerificationFilterIntegrationTestWithJwks, Success1) {
 
   TestVerification(createHeaders(kJwtNoKid), "", createIssuerHeaders(),
                    kPublicKey, true, expected_headers, "");
+}
+
+TEST_P(JwtVerificationFilterIntegrationTestWithJwks, BypassUrlSuccess) {
+  auto scenarios =  {
+    Http::TestHeaderMapImpl{{":method", "OPTIONS"}, {":path", "/authless"}, {":authority", "host"}},
+    Http::TestHeaderMapImpl{{":method", "HEAD"}, {":path", "/authless"}, {":authority", "host"}},
+  };
+
+  for (auto &scenario : scenarios) {
+    TestVerification(scenario, "", Http::TestHeaderMapImpl{},
+        "", true, scenario, "");
+  }
 }
 
 TEST_P(JwtVerificationFilterIntegrationTestWithJwks, JwtExpired) {

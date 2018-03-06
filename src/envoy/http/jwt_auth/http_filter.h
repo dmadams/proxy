@@ -15,7 +15,7 @@
 
 #pragma once
 
-#include "src/envoy/http/jwt_auth/jwt_authenticator.h"
+#include "src/envoy/utils/jwt_authenticator.h"
 
 #include "common/common/logger.h"
 #include "server/config/network/http_connection_manager.h"
@@ -25,11 +25,12 @@ namespace Http {
 
 // The Envoy filter to process JWT auth.
 class JwtVerificationFilter : public StreamDecoderFilter,
-                              public JwtAuth::JwtAuthenticator::Callbacks,
+                              public Utils::JwtAuth::JwtAuthenticator::Callbacks,
                               public Logger::Loggable<Logger::Id::filter> {
  public:
   JwtVerificationFilter(Upstream::ClusterManager& cm,
-                        JwtAuth::JwtAuthStore& store);
+                        Utils::JwtAuth::JwtAuthStore& store,
+                        const google::protobuf::RepeatedPtrField<Envoy::Utils::Config::HttpPattern> &bypass_jwt); 
   ~JwtVerificationFilter();
 
   // Http::StreamFilterBase
@@ -43,15 +44,22 @@ class JwtVerificationFilter : public StreamDecoderFilter,
       StreamDecoderFilterCallbacks& callbacks) override;
 
  private:
+  // A function that determines whether the given request can bypass
+  // auth.
+  bool OkToBypass() const;
+  
   // the function for JwtAuth::Authenticator::Callbacks interface.
   // To be called when its Verify() call is completed.
-  void onDone(const JwtAuth::Status& status);
+  void onDone(const Utils::JwtAuth::Status& status, const Utils::JwtAuth::Jwt* jwt);
 
   // The callback funcion.
   StreamDecoderFilterCallbacks* decoder_callbacks_;
   // The auth object.
-  JwtAuth::JwtAuthenticator jwt_auth_;
-
+  Utils::JwtAuth::JwtAuthenticator jwt_auth_;
+  // The white-list of endpoints that can bypass the auth filter.
+  const google::protobuf::RepeatedPtrField<Envoy::Utils::Config::HttpPattern> &bypass_jwt_;
+  // Reference to headers being processed. 
+  HeaderMap* headers_;
   // The state of the request
   enum State { Init, Calling, Responded, Complete };
   State state_ = Init;
