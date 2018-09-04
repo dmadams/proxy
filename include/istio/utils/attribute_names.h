@@ -1,4 +1,4 @@
-/* Copyright 2017 Istio Authors. All Rights Reserved.
+/* Copyright 2018 Istio Authors. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,17 +13,22 @@
  * limitations under the License.
  */
 
-#ifndef ISTIO_CONTROL_ATTRIBUTE_NAMES_H
-#define ISTIO_CONTROL_ATTRIBUTE_NAMES_H
+#ifndef ISTIO_UTILS_ATTRIBUTE_NAMES_H
+#define ISTIO_UTILS_ATTRIBUTE_NAMES_H
 
 #include <string>
 
 namespace istio {
-namespace control {
+namespace utils {
 
 // Define attribute names
 struct AttributeName {
+  // source.user is replaced by source.principal
+  // https://github.com/istio/istio/issues/4689
   static const char kSourceUser[];
+  static const char kSourcePrincipal[];
+  static const char kSourceNamespace[];
+  static const char kDestinationPrincipal[];
 
   static const char kRequestHeaders[];
   static const char kRequestHost[];
@@ -31,7 +36,12 @@ struct AttributeName {
   static const char kRequestPath[];
   static const char kRequestReferer[];
   static const char kRequestScheme[];
-  static const char kRequestSize[];
+  static const char kRequestUrlPath[];
+  static const char kRequestQueryParams[];
+  static const char kRequestBodySize[];
+  // Total size of request received, including request headers, body, and
+  // trailers.
+  static const char kRequestTotalSize[];
   static const char kRequestTime[];
   static const char kRequestUserAgent[];
   static const char kRequestApiKey[];
@@ -39,7 +49,9 @@ struct AttributeName {
   static const char kResponseCode[];
   static const char kResponseDuration[];
   static const char kResponseHeaders[];
-  static const char kResponseSize[];
+  static const char kResponseBodySize[];
+  // Total size of response sent, including response headers and body.
+  static const char kResponseTotalSize[];
   static const char kResponseTime[];
 
   // TCP attributes
@@ -50,30 +62,47 @@ struct AttributeName {
 
   static const char kDestinationIp[];
   static const char kDestinationPort[];
+  static const char kDestinationUID[];
+  static const char kOriginIp[];
   static const char kConnectionReceviedBytes[];
   static const char kConnectionReceviedTotalBytes[];
   static const char kConnectionSendBytes[];
   static const char kConnectionSendTotalBytes[];
   static const char kConnectionDuration[];
   static const char kConnectionMtls[];
+  static const char kConnectionRequestedServerName[];
   static const char kConnectionId[];
+  // Record TCP connection status: open, continue, close
+  static const char kConnectionEvent[];
 
   // Context attributes
   static const char kContextProtocol[];
   static const char kContextTime[];
+  static const char kContextProxyErrorCode[];
 
   // Check error code and message.
   static const char kCheckErrorCode[];
   static const char kCheckErrorMessage[];
+
+  // Check and Quota cache hit
+  static const char kCheckCacheHit[];
+  static const char kQuotaCacheHit[];
 
   // Authentication attributes
   static const char kRequestAuthPrincipal[];
   static const char kRequestAuthAudiences[];
   static const char kRequestAuthPresenter[];
   static const char kRequestAuthClaims[];
+  static const char kRequestAuthRawClaims[];
+
+  static const char kResponseGrpcStatus[];
+  static const char kResponseGrpcMessage[];
+
+  static const char kRbacPermissiveResponseCode[];
+  static const char kRbacPermissivePolicyId[];
 };
 
-}  // namespace control
+}  // namespace utils
 }  // namespace istio
 
-#endif  // ISTIO_CONTROL_ATTRIBUTE_NAMES_H
+#endif  // ISTIO_UTILS_ATTRIBUTE_NAMES_H

@@ -18,8 +18,9 @@
 
 using ::google::protobuf::util::Status;
 using ::istio::mixerclient::CancelFunc;
+using ::istio::mixerclient::CheckDoneFunc;
+using ::istio::mixerclient::CheckResponseInfo;
 using ::istio::mixerclient::TransportCheckFunc;
-using ::istio::mixerclient::DoneFunc;
 using ::istio::quota_config::Requirement;
 
 namespace istio {
@@ -46,19 +47,15 @@ void RequestHandlerImpl::ExtractRequestAttributes(CheckData* check_data) {
 CancelFunc RequestHandlerImpl::Check(CheckData* check_data,
                                      HeaderUpdate* header_update,
                                      TransportCheckFunc transport,
-                                     DoneFunc on_done) {
+                                     CheckDoneFunc on_done) {
   ExtractRequestAttributes(check_data);
-
-  if (service_context_->client_context()->config().has_forward_attributes()) {
-    AttributesBuilder::ForwardAttributes(
-        service_context_->client_context()->config().forward_attributes(),
-        header_update);
-  } else {
-    header_update->RemoveIstioAttributes();
-  }
+  header_update->RemoveIstioAttributes();
+  service_context_->InjectForwardedAttributes(header_update);
 
   if (!service_context_->enable_mixer_check()) {
-    on_done(Status::OK);
+    CheckResponseInfo check_response_info;
+    check_response_info.response_status = Status::OK;
+    on_done(check_response_info);
     return nullptr;
   }
 

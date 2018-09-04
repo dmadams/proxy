@@ -13,15 +13,16 @@
  * limitations under the License.
  */
 #include "src/istio/mixerclient/client_impl.h"
+#include "include/istio/mixerclient/check_response.h"
 #include "include/istio/utils/protobuf.h"
 
+using ::google::protobuf::util::Status;
+using ::google::protobuf::util::error::Code;
 using ::istio::mixer::v1::Attributes;
 using ::istio::mixer::v1::CheckRequest;
 using ::istio::mixer::v1::CheckResponse;
 using ::istio::mixer::v1::ReportRequest;
 using ::istio::mixer::v1::ReportResponse;
-using ::google::protobuf::util::Status;
-using ::google::protobuf::util::error::Code;
 
 namespace istio {
 namespace mixerclient {
@@ -53,14 +54,20 @@ MixerClientImpl::~MixerClientImpl() {}
 CancelFunc MixerClientImpl::Check(
     const Attributes &attributes,
     const std::vector<::istio::quota_config::Requirement> &quotas,
-    TransportCheckFunc transport, DoneFunc on_done) {
+    TransportCheckFunc transport, CheckDoneFunc on_done) {
   ++total_check_calls_;
 
   std::unique_ptr<CheckCache::CheckResult> check_result(
       new CheckCache::CheckResult);
   check_cache_->Check(attributes, check_result.get());
+
+  CheckResponseInfo check_response_info;
+  check_response_info.is_check_cache_hit = check_result->IsCacheHit();
+  check_response_info.response_status = check_result->status();
+  check_response_info.route_directive = check_result->route_directive();
+
   if (check_result->IsCacheHit() && !check_result->status().ok()) {
-    on_done(check_result->status());
+    on_done(check_response_info);
     return nullptr;
   }
 
@@ -77,8 +84,10 @@ CancelFunc MixerClientImpl::Check(
 
   CheckRequest request;
   bool quota_call = quota_result->BuildRequest(&request);
+  check_response_info.is_quota_cache_hit = quota_result->IsCacheHit();
+  check_response_info.response_status = quota_result->status();
   if (check_result->IsCacheHit() && quota_result->IsCacheHit()) {
-    on_done(quota_result->status());
+    on_done(check_response_info);
     on_done = nullptr;
     if (!quota_call) {
       return nullptr;
@@ -112,16 +121,21 @@ CancelFunc MixerClientImpl::Check(
   }
 
   return transport(
-      request, response, [this, request_copy, response, raw_check_result,
-                          raw_quota_result, on_done](const Status &status) {
+      request, response,
+      [this, request_copy, response, raw_check_result, raw_quota_result,
+       on_done](const Status &status) {
         raw_check_result->SetResponse(status, *request_copy, *response);
         raw_quota_result->SetResponse(status, *request_copy, *response);
+        CheckResponseInfo check_response_info;
         if (on_done) {
           if (!raw_check_result->status().ok()) {
-            on_done(raw_check_result->status());
+            check_response_info.response_status = raw_check_result->status();
           } else {
-            on_done(raw_quota_result->status());
+            check_response_info.response_status = raw_quota_result->status();
           }
+          check_response_info.route_directive =
+              raw_check_result->route_directive();
+          on_done(check_response_info);
         }
         delete raw_check_result;
         delete raw_quota_result;

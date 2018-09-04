@@ -14,7 +14,7 @@
  */
 
 #ifndef ISTIO_PREFETCH_QUOTA_PREFETCH_H_
-#define ISTTO_PREFETCH_QUOTA_PREFETCH_H_
+#define ISTIO_PREFETCH_QUOTA_PREFETCH_H_
 
 #include <chrono>
 #include <functional>
@@ -69,7 +69,7 @@ class QuotaPrefetch {
   virtual bool Check(int amount, Tick t) = 0;
 };
 
-}  // namespace mixer_client
+}  // namespace prefetch
 }  // namespace istio
 
 #endif  // ISTIO_PREFETCH_QUOTA_PREFETCH_H_

@@ -13,29 +13,14 @@
  * limitations under the License.
  */
 
-#include "src/envoy/http/authn/mtls_authentication.h"
-#include "src/envoy/utils/utils.h"
+#include "src/envoy/utils/filter_names.h"
 
 namespace Envoy {
-namespace Http {
+namespace Utils {
 
-MtlsAuthentication::MtlsAuthentication(const Network::Connection* connection)
-    : connection_(connection) {}
+// TODO: using more standard naming, e.g istio.jwt, istio.authn
+const char IstioFilterName::kJwt[] = "jwt-auth";
+const char IstioFilterName::kAuthentication[] = "istio_authn";
 
-bool MtlsAuthentication::GetSourceIpPort(std::string* ip, int* port) const {
-  if (connection_) {
-    return Utils::GetIpPort(connection_->remoteAddress()->ip(), ip, port);
-  }
-  return false;
-}
-
-bool MtlsAuthentication::GetSourceUser(std::string* user) const {
-  return Utils::GetSourceUser(connection_, user);
-}
-
-bool MtlsAuthentication::IsMutualTLS() const {
-  return Utils::IsMutualTLS(connection_);
-}
-
-}  // namespace Http
+}  // namespace Utils
 }  // namespace Envoy

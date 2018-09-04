@@ -29,6 +29,27 @@ load(
 )
 
 envoy_cc_library(
+    name = "authn_lib",
+    srcs = [
+        "authn.cc",
+    ],
+    hdrs = [
+        "authn.h",
+    ],
+    repository = "@envoy",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":utils_lib",
+        "//include/istio/utils:attribute_names_header",
+        "//src/istio/authn:context_proto",
+        "//src/istio/utils:attribute_names_lib",
+        "//src/istio/utils:utils_lib",
+        ":filter_names_lib",
+        "@envoy//source/exe:envoy_common_lib",
+    ],
+)
+
+envoy_cc_library(
     name = "utils_lib",
     srcs = [
         "config.cc",
@@ -47,6 +68,7 @@ envoy_cc_library(
         "utils.h",
     ],
     repository = "@envoy",
+    visibility = ["//visibility:public"],
     deps = [
         "//src/istio/mixerclient:mixerclient_lib",
         "//external:mixer_client_config_cc_proto",
@@ -55,15 +77,27 @@ envoy_cc_library(
 )
 
 envoy_cc_test(
+    name = "authn_test",
+    srcs = [
+        "authn_test.cc",
+    ],
+    repository = "@envoy",
+    deps = [
+        ":authn_lib",
+        "@envoy//test/test_common:utility_lib",
+    ],
+)
+
+envoy_cc_test(
     name = "utils_test",
     srcs = [
         "utils_test.cc",
     ],
+    repository = "@envoy",
     deps = [
         ":utils_lib",
         "@envoy//test/test_common:utility_lib",
     ],
-    repository = "@envoy",
 )
 
 api_proto_library(
@@ -168,4 +202,15 @@ envoy_cc_test(
         "@envoy//test/mocks/upstream:upstream_mocks",
         "@envoy//test/test_common:utility_lib",
     ],
+)
+
+cc_library(
+    name = "filter_names_lib",
+    srcs = [
+        "filter_names.cc",
+    ],
+    hdrs = [
+        "filter_names.h",
+    ],
+    visibility = ["//visibility:public"],
 )

@@ -14,8 +14,10 @@
  */
 
 #include "service_context.h"
-#include "src/istio/control/attribute_names.h"
+#include "include/istio/utils/attribute_names.h"
+#include "src/istio/control/http/attributes_builder.h"
 
+using ::istio::mixer::v1::Attributes;
 using ::istio::mixer::v1::config::client::ServiceConfig;
 
 namespace istio {
@@ -23,7 +25,7 @@ namespace control {
 namespace http {
 
 ServiceContext::ServiceContext(std::shared_ptr<ClientContext> client_context,
-                               const ServiceConfig* config)
+                               const ServiceConfig *config)
     : client_context_(client_context) {
   if (config) {
     service_config_.reset(new ServiceConfig(*config));
@@ -36,30 +38,47 @@ void ServiceContext::BuildParsers() {
     return;
   }
   // Build api_spec parsers
-  for (const auto& api_spec : service_config_->http_api_spec()) {
+  for (const auto &api_spec : service_config_->http_api_spec()) {
     api_spec_.MergeFrom(api_spec);
   }
   api_spec_parser_ = ::istio::api_spec::HttpApiSpecParser::Create(api_spec_);
 
   // Build quota parser
-  for (const auto& quota : service_config_->quota_spec()) {
+  for (const auto &quota : service_config_->quota_spec()) {
     quota_parsers_.push_back(
-        std::move(::istio::quota_config::ConfigParser::Create(quota)));
+        ::istio::quota_config::ConfigParser::Create(quota));
   }
 }
 
 // Add static mixer attributes.
-void ServiceContext::AddStaticAttributes(RequestContext* request) const {
+void ServiceContext::AddStaticAttributes(RequestContext *request) const {
   if (client_context_->config().has_mixer_attributes()) {
     request->attributes.MergeFrom(client_context_->config().mixer_attributes());
   }
-  if (service_config_->has_mixer_attributes()) {
+  if (service_config_ && service_config_->has_mixer_attributes()) {
     request->attributes.MergeFrom(service_config_->mixer_attributes());
   }
 }
 
-void ServiceContext::AddApiAttributes(CheckData* check_data,
-                                      RequestContext* request) const {
+// Inject a header that contains the static forwarded attributes.
+void ServiceContext::InjectForwardedAttributes(
+    HeaderUpdate *header_update) const {
+  Attributes attributes;
+
+  if (client_context_->config().has_forward_attributes()) {
+    attributes.MergeFrom(client_context_->config().forward_attributes());
+  }
+  if (service_config_ && service_config_->has_forward_attributes()) {
+    attributes.MergeFrom(service_config_->forward_attributes());
+  }
+
+  if (!attributes.attributes().empty()) {
+    AttributesBuilder::ForwardAttributes(attributes, header_update);
+  }
+}
+
+void ServiceContext::AddApiAttributes(CheckData *check_data,
+                                      RequestContext *request) const {
   if (!api_spec_parser_) {
     return;
   }
@@ -72,14 +91,15 @@ void ServiceContext::AddApiAttributes(CheckData* check_data,
 
   std::string api_key;
   if (api_spec_parser_->ExtractApiKey(check_data, &api_key)) {
-    (*request->attributes.mutable_attributes())[AttributeName::kRequestApiKey]
+    (*request->attributes
+          .mutable_attributes())[utils::AttributeName::kRequestApiKey]
         .set_string_value(api_key);
   }
 }
 
 // Add quota requirements from quota configs.
-void ServiceContext::AddQuotas(RequestContext* request) const {
-  for (const auto& parser : quota_parsers_) {
+void ServiceContext::AddQuotas(RequestContext *request) const {
+  for (const auto &parser : quota_parsers_) {
     parser->GetRequirements(request->attributes, &request->quotas);
   }
 }

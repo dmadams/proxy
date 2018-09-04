@@ -14,15 +14,27 @@
  */
 
 #include "src/envoy/http/authn/http_filter.h"
-#include "src/envoy/http/authn/mtls_authentication.h"
+#include "authentication/v1alpha1/policy.pb.h"
+#include "common/http/utility.h"
+#include "envoy/config/filter/http/authn/v2alpha1/config.pb.h"
+#include "src/envoy/http/authn/origin_authenticator.h"
+#include "src/envoy/http/authn/peer_authenticator.h"
+#include "src/envoy/utils/authn.h"
+#include "src/envoy/utils/filter_names.h"
 #include "src/envoy/utils/utils.h"
+
+using istio::authn::Payload;
+using istio::envoy::config::filter::http::authn::v2alpha1::FilterConfig;
+
+namespace iaapi = istio::authentication::v1alpha1;
 
 namespace Envoy {
 namespace Http {
+namespace Istio {
+namespace AuthN {
 
-AuthenticationFilter::AuthenticationFilter(
-    const istio::authentication::v1alpha1::Policy& config)
-    : config_(config) {}
+AuthenticationFilter::AuthenticationFilter(const FilterConfig& filter_config)
+    : filter_config_(filter_config) {}
 
 AuthenticationFilter::~AuthenticationFilter() {}
 
@@ -30,79 +42,91 @@ void AuthenticationFilter::onDestroy() {
   ENVOY_LOG(debug, "Called AuthenticationFilter : {}", __func__);
 }
 
-FilterHeadersStatus AuthenticationFilter::decodeHeaders(HeaderMap&, bool) {
-  ENVOY_LOG(debug, "Called AuthenticationFilter : {}", __func__);
+FilterHeadersStatus AuthenticationFilter::decodeHeaders(HeaderMap& headers,
+                                                        bool) {
+  ENVOY_LOG(debug, "AuthenticationFilter::decodeHeaders with config\n{}",
+            filter_config_.DebugString());
+  state_ = State::PROCESSING;
 
-  int peer_size = config_.peers_size();
-  ENVOY_LOG(debug, "AuthenticationFilter: {} config.peers_size()={}", __func__,
-            peer_size);
-  if (peer_size > 0) {
-    const ::istio::authentication::v1alpha1::Mechanism& m = config_.peers()[0];
-    if (m.has_mtls()) {
-      ENVOY_LOG(debug, "AuthenticationFilter: {} this connection requires mTLS",
-                __func__);
-      MtlsAuthentication mtls_authn(decoder_callbacks_->connection());
-      if (mtls_authn.IsMutualTLS() == false) {
-        // In prototype, only log the authentication policy violation.
-        ENVOY_LOG(error,
-                  "AuthenticationFilter: authn policy requires mTLS but the "
-                  "connection is not mTLS!");
-      } else {
-        ENVOY_LOG(debug, "AuthenticationFilter: the connection is mTLS.");
-        std::string user, ip;
-        int port = 0;
-        bool ret = false;
-        ret = mtls_authn.GetSourceUser(&user);
-        if (ret) {
-          ENVOY_LOG(debug, "AuthenticationFilter: the source user is {}", user);
-        } else {
-          ENVOY_LOG(error,
-                    "AuthenticationFilter: GetSourceUser() returns false!");
-        }
-        ret = mtls_authn.GetSourceIpPort(&ip, &port);
-        if (ret) {
-          ENVOY_LOG(debug,
-                    "AuthenticationFilter: the source ip is {}, the source "
-                    "port is {}",
-                    user, port);
-        } else {
-          ENVOY_LOG(error,
-                    "AuthenticationFilter: GetSourceIpPort() returns false!");
-        }
-      }
-    } else {
-      ENVOY_LOG(
-          debug,
-          "AuthenticationFilter: {} this connection does not require mTLS",
-          __func__);
-    }
+  filter_context_.reset(new Istio::AuthN::FilterContext(
+      decoder_callbacks_->requestInfo().dynamicMetadata(), headers,
+      decoder_callbacks_->connection(), filter_config_));
+
+  Payload payload;
+
+  if (!filter_config_.policy().peer_is_optional() &&
+      !createPeerAuthenticator(filter_context_.get())->run(&payload)) {
+    rejectRequest("Peer authentication failed.");
+    return FilterHeadersStatus::StopIteration;
   }
 
-  ENVOY_LOG(
-      debug,
-      "Called AuthenticationFilter : {}, return FilterHeadersStatus::Continue;",
-      __func__);
+  bool success =
+      filter_config_.policy().origin_is_optional() ||
+      createOriginAuthenticator(filter_context_.get())->run(&payload);
+
+  if (!success) {
+    rejectRequest("Origin authentication failed.");
+    return FilterHeadersStatus::StopIteration;
+  }
+
+  // Put authentication result to headers.
+  if (filter_context_ != nullptr) {
+    // Save auth results in the metadata, could be used later by RBAC and/or
+    // mixer filter.
+    ProtobufWkt::Struct data;
+    Utils::Authentication::SaveAuthAttributesToStruct(
+        filter_context_->authenticationResult(), data);
+    decoder_callbacks_->requestInfo().setDynamicMetadata(
+        Utils::IstioFilterName::kAuthentication, data);
+    ENVOY_LOG(debug, "Saved Dynamic Metadata:\n{}", data.DebugString());
+  }
+  state_ = State::COMPLETE;
   return FilterHeadersStatus::Continue;
 }
 
 FilterDataStatus AuthenticationFilter::decodeData(Buffer::Instance&, bool) {
-  ENVOY_LOG(debug, "Called AuthenticationFilter : {}", __func__);
-  ENVOY_LOG(debug,
-            "Called AuthenticationFilter : {} FilterDataStatus::Continue;",
-            __FUNCTION__);
+  if (state_ == State::PROCESSING) {
+    return FilterDataStatus::StopIterationAndWatermark;
+  }
   return FilterDataStatus::Continue;
 }
 
 FilterTrailersStatus AuthenticationFilter::decodeTrailers(HeaderMap&) {
-  ENVOY_LOG(debug, "Called AuthenticationFilter : {}", __func__);
+  if (state_ == State::PROCESSING) {
+    return FilterTrailersStatus::StopIteration;
+  }
   return FilterTrailersStatus::Continue;
 }
 
 void AuthenticationFilter::setDecoderFilterCallbacks(
     StreamDecoderFilterCallbacks& callbacks) {
-  ENVOY_LOG(debug, "Called AuthenticationFilter : {}", __func__);
   decoder_callbacks_ = &callbacks;
 }
 
+void AuthenticationFilter::rejectRequest(const std::string& message) {
+  if (state_ != State::PROCESSING) {
+    return;
+  }
+  state_ = State::REJECTED;
+  decoder_callbacks_->sendLocalReply(Http::Code::Unauthorized, message,
+                                     nullptr);
+}
+
+std::unique_ptr<Istio::AuthN::AuthenticatorBase>
+AuthenticationFilter::createPeerAuthenticator(
+    Istio::AuthN::FilterContext* filter_context) {
+  return std::make_unique<Istio::AuthN::PeerAuthenticator>(
+      filter_context, filter_config_.policy());
+}
+
+std::unique_ptr<Istio::AuthN::AuthenticatorBase>
+AuthenticationFilter::createOriginAuthenticator(
+    Istio::AuthN::FilterContext* filter_context) {
+  return std::make_unique<Istio::AuthN::OriginAuthenticator>(
+      filter_context, filter_config_.policy());
+}
+
+}  // namespace AuthN
+}  // namespace Istio
 }  // namespace Http
 }  // namespace Envoy

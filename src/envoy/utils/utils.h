@@ -26,17 +26,27 @@ namespace Envoy {
 namespace Utils {
 
 // Extract HTTP headers into a string map
-std::map<std::string, std::string> ExtractHeaders(
-    const Http::HeaderMap& header_map, const std::set<std::string>& exclusives);
+void ExtractHeaders(const Http::HeaderMap& header_map,
+                    const std::set<std::string>& exclusives,
+                    std::map<std::string, std::string>& headers);
 
 // Get ip and port from Envoy ip.
 bool GetIpPort(const Network::Address::Ip* ip, std::string* str_ip, int* port);
 
-// Get user id from ssl.
-bool GetSourceUser(const Network::Connection* connection, std::string* user);
+// Get destination.uid attribute value from metadata.
+bool GetDestinationUID(const envoy::api::v2::core::Metadata& metadata,
+                       std::string* uid);
+
+// Get peer or local principal URI.
+bool GetPrincipal(const Network::Connection* connection, bool peer,
+                  std::string* principal);
 
 // Returns true if connection is mutual TLS enabled.
 bool IsMutualTLS(const Network::Connection* connection);
+
+// Get requested server name, SNI in case of TLS
+bool GetRequestedServerName(const Network::Connection* connection,
+                            std::string* name);
 
 // Parse JSON string into message.
 ::google::protobuf::util::Status ParseJsonMessage(

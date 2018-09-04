@@ -28,6 +28,10 @@ class MockReportData : public ReportData {
  public:
   MOCK_CONST_METHOD0(GetResponseHeaders, std::map<std::string, std::string>());
   MOCK_CONST_METHOD1(GetReportInfo, void(ReportInfo* info));
+  MOCK_CONST_METHOD2(GetDestinationIpPort, bool(std::string* ip, int* port));
+  MOCK_CONST_METHOD1(GetDestinationUID, bool(std::string* ip));
+  MOCK_CONST_METHOD1(GetGrpcStatus, bool(GrpcStatus* status));
+  MOCK_CONST_METHOD1(GetRbacReportInfo, bool(RbacReportInfo* info));
 };
 
 }  // namespace http

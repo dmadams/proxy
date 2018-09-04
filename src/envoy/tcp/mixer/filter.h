@@ -51,11 +51,13 @@ class Filter : public Network::Filter,
 
   // CheckData virtual functions.
   bool GetSourceIpPort(std::string* str_ip, int* port) const override;
-  bool GetSourceUser(std::string* user) const override;
+  bool GetPrincipal(bool peer, std::string* user) const override;
   bool IsMutualTLS() const override;
+  bool GetRequestedServerName(std::string* name) const override;
 
   // ReportData virtual functions.
   bool GetDestinationIpPort(std::string* str_ip, int* port) const override;
+  bool GetDestinationUID(std::string* uid) const override;
   void GetReportInfo(
       ::istio::control::tcp::ReportData::ReportInfo* data) const override;
   std::string GetConnectionId() const override;

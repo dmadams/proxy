@@ -24,9 +24,11 @@ using ::google::protobuf::util::Status;
 using ::istio::mixer::v1::Attributes;
 using ::istio::mixer::v1::config::client::TcpClientConfig;
 using ::istio::mixerclient::CancelFunc;
-using ::istio::mixerclient::TransportCheckFunc;
+using ::istio::mixerclient::CheckDoneFunc;
+using ::istio::mixerclient::CheckResponseInfo;
 using ::istio::mixerclient::DoneFunc;
 using ::istio::mixerclient::MixerClient;
+using ::istio::mixerclient::TransportCheckFunc;
 using ::istio::quota_config::Requirement;
 
 using ::testing::_;
@@ -64,28 +66,29 @@ class RequestHandlerImplTest : public ::testing::Test {
 TEST_F(RequestHandlerImplTest, TestHandlerDisabledCheck) {
   ::testing::NiceMock<MockCheckData> mock_data;
   EXPECT_CALL(mock_data, GetSourceIpPort(_, _)).Times(1);
-  EXPECT_CALL(mock_data, GetSourceUser(_)).Times(1);
+  EXPECT_CALL(mock_data, GetPrincipal(_, _)).Times(2);
 
   // Check should not be called.
   EXPECT_CALL(*mock_client_, Check(_, _, _, _)).Times(0);
 
   client_config_.set_disable_check_calls(true);
   auto handler = controller_->CreateRequestHandler();
-  handler->Check(&mock_data,
-                 [](const Status& status) { EXPECT_TRUE(status.ok()); });
+  handler->Check(&mock_data, [](const CheckResponseInfo& info) {
+    EXPECT_TRUE(info.response_status.ok());
+  });
 }
 
 TEST_F(RequestHandlerImplTest, TestHandlerCheck) {
   ::testing::NiceMock<MockCheckData> mock_data;
   EXPECT_CALL(mock_data, GetSourceIpPort(_, _)).Times(1);
-  EXPECT_CALL(mock_data, GetSourceUser(_)).Times(1);
+  EXPECT_CALL(mock_data, GetPrincipal(_, _)).Times(2);
 
   // Check should be called.
   EXPECT_CALL(*mock_client_, Check(_, _, _, _))
       .WillOnce(Invoke([](const Attributes& attributes,
                           const std::vector<Requirement>& quotas,
                           TransportCheckFunc transport,
-                          DoneFunc on_done) -> CancelFunc {
+                          CheckDoneFunc on_done) -> CancelFunc {
         auto map = attributes.attributes();
         EXPECT_EQ(map["key1"].string_value(), "value1");
         EXPECT_EQ(quotas.size(), 1);
@@ -101,13 +104,14 @@ TEST_F(RequestHandlerImplTest, TestHandlerCheck) {
 TEST_F(RequestHandlerImplTest, TestHandlerReport) {
   ::testing::NiceMock<MockReportData> mock_data;
   EXPECT_CALL(mock_data, GetDestinationIpPort(_, _)).Times(1);
+  EXPECT_CALL(mock_data, GetDestinationUID(_)).Times(1);
   EXPECT_CALL(mock_data, GetReportInfo(_)).Times(1);
 
   // Report should be called.
   EXPECT_CALL(*mock_client_, Report(_)).Times(1);
 
   auto handler = controller_->CreateRequestHandler();
-  handler->Report(&mock_data);
+  handler->Report(&mock_data, ReportData::CONTINUE);
 }
 
 }  // namespace tcp

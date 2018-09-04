@@ -35,3 +35,10 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
+cc_library(
+    name = "attribute_names_header",
+    hdrs = [
+        "attribute_names.h",
+    ],
+    visibility = ["//visibility:public"],
+)

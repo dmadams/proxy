@@ -28,7 +28,10 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         "//include/istio/control/tcp:headers_lib",
+        "//include/istio/utils:attribute_names_header",
         "//src/istio/control:common_lib",
+        "//src/istio/utils:attribute_names_lib",
+        "//src/istio/utils:utils_lib",
     ],
 )
 
@@ -43,6 +46,7 @@ cc_test(
     linkstatic = 1,
     deps = [
         ":control_lib",
+        "//src/istio/utils:utils_lib",
         "//external:googletest_main",
     ],
 )
@@ -58,7 +62,7 @@ cc_test(
     linkstatic = 1,
     deps = [
         ":control_lib",
-        "//src/istio/control:mock_mixer_client",
         "//external:googletest_main",
+        "//src/istio/control:mock_mixer_client",
     ],
 )

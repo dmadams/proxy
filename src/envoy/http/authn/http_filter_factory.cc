@@ -13,35 +13,32 @@
  * limitations under the License.
  */
 
-#include "src/envoy/http/authn/http_filter.h"
-#include "authentication/v1alpha1/policy.pb.h"
+#include "envoy/config/filter/http/authn/v2alpha1/config.pb.h"
 #include "envoy/registry/registry.h"
+#include "envoy/server/filter_config.h"
 #include "google/protobuf/util/json_util.h"
+#include "src/envoy/http/authn/http_filter.h"
+#include "src/envoy/utils/filter_names.h"
 #include "src/envoy/utils/utils.h"
+
+using istio::envoy::config::filter::http::authn::v2alpha1::FilterConfig;
 
 namespace Envoy {
 namespace Server {
 namespace Configuration {
 
-namespace {
-// The name for the Istio authentication filter.
-const std::string kAuthnFactoryName("istio_authn");
-}  // namespace
-
 class AuthnFilterConfig : public NamedHttpFilterConfigFactory,
                           public Logger::Loggable<Logger::Id::filter> {
  public:
-  HttpFilterFactoryCb createFilterFactory(const Json::Object& config,
-                                          const std::string&,
-                                          FactoryContext&) override {
+  Http::FilterFactoryCb createFilterFactory(const Json::Object& config,
+                                            const std::string&,
+                                            FactoryContext&) override {
     ENVOY_LOG(debug, "Called AuthnFilterConfig : {}", __func__);
-
+    FilterConfig filter_config;
     google::protobuf::util::Status status =
-        Utils::ParseJsonMessage(config.asJsonString(), &policy_);
+        Utils::ParseJsonMessage(config.asJsonString(), &filter_config);
     ENVOY_LOG(debug, "Called AuthnFilterConfig : Utils::ParseJsonMessage()");
-    if (status.ok()) {
-      return createFilter();
-    } else {
+    if (!status.ok()) {
       ENVOY_LOG(critical, "Utils::ParseJsonMessage() return value is: " +
                               status.ToString());
       throw EnvoyException(
@@ -49,41 +46,40 @@ class AuthnFilterConfig : public NamedHttpFilterConfigFactory,
           "is: " +
           status.ToString());
     }
+    return createFilterFactory(filter_config);
   }
 
-  HttpFilterFactoryCb createFilterFactoryFromProto(
+  Http::FilterFactoryCb createFilterFactoryFromProto(
       const Protobuf::Message& proto_config, const std::string&,
       FactoryContext&) override {
-    ENVOY_LOG(debug, "Called AuthnFilterConfig : {}", __func__);
-
-    const istio::authentication::v1alpha1::Policy& policy =
-        dynamic_cast<const istio::authentication::v1alpha1::Policy&>(
-            proto_config);
-
-    policy_ = policy;
-
-    return createFilter();
+    auto filter_config = dynamic_cast<const FilterConfig&>(proto_config);
+    return createFilterFactory(filter_config);
   }
 
   ProtobufTypes::MessagePtr createEmptyConfigProto() override {
     ENVOY_LOG(debug, "Called AuthnFilterConfig : {}", __func__);
-    return ProtobufTypes::MessagePtr{
-        new istio::authentication::v1alpha1::Policy};
+    return ProtobufTypes::MessagePtr{new FilterConfig};
   }
 
-  std::string name() override { return kAuthnFactoryName; }
+  std::string name() override {
+    return Utils::IstioFilterName::kAuthentication;
+  }
 
  private:
-  HttpFilterFactoryCb createFilter() {
+  Http::FilterFactoryCb createFilterFactory(const FilterConfig& config_pb) {
     ENVOY_LOG(debug, "Called AuthnFilterConfig : {}", __func__);
-
-    return [&](Http::FilterChainFactoryCallbacks& callbacks) -> void {
-      callbacks.addStreamDecoderFilter(
-          std::make_shared<Http::AuthenticationFilter>(policy_));
-    };
+    // Make it shared_ptr so that the object is still reachable when callback is
+    // invoked.
+    // TODO(incfly): add a test to simulate different config can be handled
+    // correctly similar to multiplexing on different port.
+    auto filter_config = std::make_shared<FilterConfig>(config_pb);
+    return
+        [filter_config](Http::FilterChainFactoryCallbacks& callbacks) -> void {
+          callbacks.addStreamDecoderFilter(
+              std::make_shared<Http::Istio::AuthN::AuthenticationFilter>(
+                  *filter_config));
+        };
   }
-
-  istio::authentication::v1alpha1::Policy policy_;
 };
 
 /**

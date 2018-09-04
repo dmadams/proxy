@@ -17,6 +17,7 @@
 #include "mixer/v1/attributes.pb.h"
 
 using ::google::protobuf::Message;
+using ::google::protobuf::Struct;
 using ::google::protobuf::util::Status;
 
 namespace Envoy {
@@ -26,12 +27,17 @@ namespace {
 
 const std::string kSPIFFEPrefix("spiffe://");
 
+// Per-host opaque data field
+const std::string kPerHostMetadataKey("istio");
+
+// Attribute field for per-host data override
+const std::string kMetadataDestinationUID("uid");
+
 }  // namespace
 
-std::map<std::string, std::string> ExtractHeaders(
-    const Http::HeaderMap& header_map,
-    const std::set<std::string>& exclusives) {
-  std::map<std::string, std::string> headers;
+void ExtractHeaders(const Http::HeaderMap& header_map,
+                    const std::set<std::string>& exclusives,
+                    std::map<std::string, std::string>& headers) {
   struct Context {
     Context(const std::set<std::string>& exclusives,
             std::map<std::string, std::string>& headers)
@@ -50,7 +56,6 @@ std::map<std::string, std::string> ExtractHeaders(
         return Http::HeaderMap::Iterate::Continue;
       },
       &ctx);
-  return headers;
 }
 
 bool GetIpPort(const Network::Address::Ip* ip, std::string* str_ip, int* port) {
@@ -70,17 +75,42 @@ bool GetIpPort(const Network::Address::Ip* ip, std::string* str_ip, int* port) {
   return false;
 }
 
-bool GetSourceUser(const Network::Connection* connection, std::string* user) {
+bool GetDestinationUID(const envoy::api::v2::core::Metadata& metadata,
+                       std::string* uid) {
+  const auto filter_it = metadata.filter_metadata().find(kPerHostMetadataKey);
+  if (filter_it == metadata.filter_metadata().end()) {
+    return false;
+  }
+  const Struct& struct_pb = filter_it->second;
+  const auto fields_it = struct_pb.fields().find(kMetadataDestinationUID);
+  if (fields_it == struct_pb.fields().end()) {
+    return false;
+  }
+  *uid = fields_it->second.string_value();
+  return true;
+}
+
+bool GetPrincipal(const Network::Connection* connection, bool peer,
+                  std::string* principal) {
   if (connection) {
     Ssl::Connection* ssl = const_cast<Ssl::Connection*>(connection->ssl());
     if (ssl != nullptr) {
-      std::string result = ssl->uriSanPeerCertificate();
+      std::string result;
+      if (peer) {
+        result = ssl->uriSanPeerCertificate();
+      } else {
+        result = ssl->uriSanLocalCertificate();
+      }
+
+      if (result.empty()) {  // empty result is not allowed
+        return false;
+      }
       if (result.length() >= kSPIFFEPrefix.length() &&
           result.compare(0, kSPIFFEPrefix.length(), kSPIFFEPrefix) == 0) {
         // Strip out the prefix "spiffe://" in the identity.
-        *user = result.substr(kSPIFFEPrefix.size());
+        *principal = result.substr(kSPIFFEPrefix.size());
       } else {
-        *user = result;
+        *principal = result;
       }
       return true;
     }
@@ -91,6 +121,16 @@ bool GetSourceUser(const Network::Connection* connection, std::string* user) {
 bool IsMutualTLS(const Network::Connection* connection) {
   return connection != nullptr && connection->ssl() != nullptr &&
          connection->ssl()->peerCertificatePresented();
+}
+
+bool GetRequestedServerName(const Network::Connection* connection,
+                            std::string* name) {
+  if (connection && !connection->requestedServerName().empty()) {
+    *name = std::string(connection->requestedServerName());
+    return true;
+  }
+
+  return false;
 }
 
 Status ParseJsonMessage(const std::string& json, Message* output) {

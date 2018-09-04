@@ -20,6 +20,7 @@
 #include <map>
 #include <string>
 
+#include "google/protobuf/struct.pb.h"
 #include "mixer/v1/attributes.pb.h"
 
 namespace istio {
@@ -88,11 +89,51 @@ class AttributesBuilder {
     }
   }
 
+  void AddProtoStructStringMap(const std::string& key,
+                               const google::protobuf::Struct& struct_map) {
+    if (struct_map.fields().empty()) {
+      return;
+    }
+    auto entries = (*attributes_->mutable_attributes())[key]
+                       .mutable_string_map_value()
+                       ->mutable_entries();
+    entries->clear();
+    for (const auto& field : struct_map.fields()) {
+      // Ignore all fields that are not string or string list.
+      switch (field.second.kind_case()) {
+        case google::protobuf::Value::kStringValue:
+          (*entries)[field.first] = field.second.string_value();
+          break;
+        case google::protobuf::Value::kListValue:
+          if (field.second.list_value().values_size() > 0) {
+            // The items in the list is converted into a
+            // comma separated string
+            std::string s;
+            for (int i = 0; i < field.second.list_value().values_size(); i++) {
+              s += field.second.list_value().values().Get(i).string_value();
+              if (i + 1 < field.second.list_value().values_size()) {
+                s += ",";
+              }
+            }
+            (*entries)[field.first] = s;
+          }
+          break;
+        default:
+          break;
+      }
+    }
+  }
+
+  bool HasAttribute(const std::string& key) const {
+    const auto& attrs_map = attributes_->attributes();
+    return attrs_map.find(key) != attrs_map.end();
+  }
+
  private:
   ::istio::mixer::v1::Attributes* attributes_;
 };
 
-}  // namespace mixerclient
+}  // namespace utils
 }  // namespace istio
 
 #endif  // ISTIO_MIXERCLIENT_ATTRIBUTES_BUILDER_H

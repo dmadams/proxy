@@ -21,11 +21,11 @@
 #include "src/istio/mixerclient/status_test_util.h"
 
 using namespace std::chrono;
+using ::google::protobuf::util::Status;
+using ::google::protobuf::util::error::Code;
 using ::istio::mixer::v1::Attributes;
 using ::istio::mixer::v1::CheckResponse;
 using ::istio::mixer::v1::ReferencedAttributes;
-using ::google::protobuf::util::Status;
-using ::google::protobuf::util::error::Code;
 
 namespace istio {
 namespace mixerclient {
@@ -49,16 +49,18 @@ class CheckCacheTest : public ::testing::Test {
     CheckResponse ok_response;
     ok_response.mutable_precondition()->set_valid_use_count(1000);
     // Just to calculate signature
-    EXPECT_ERROR_CODE(Code::NOT_FOUND, cache_->Check(attributes_, FakeTime(0)));
+    EXPECT_ERROR_CODE(Code::NOT_FOUND,
+                      cache_->Check(attributes_, FakeTime(0), nullptr));
     // set to the cache
     EXPECT_OK(cache_->CacheResponse(attributes_, ok_response, FakeTime(0)));
 
     // Still not_found, so cache is disabled.
-    EXPECT_ERROR_CODE(Code::NOT_FOUND, cache_->Check(attributes_, FakeTime(0)));
+    EXPECT_ERROR_CODE(Code::NOT_FOUND,
+                      cache_->Check(attributes_, FakeTime(0), nullptr));
   }
 
   Status Check(const Attributes& request, time_point<system_clock> time_now) {
-    return cache_->Check(request, time_now);
+    return cache_->Check(request, time_now, nullptr);
   }
   Status CacheResponse(const Attributes& attributes,
                        const ::istio::mixer::v1::CheckResponse& response,
@@ -131,6 +133,9 @@ TEST_F(CheckCacheTest, TestCheckResult) {
 
   CheckResponse ok_response;
   ok_response.mutable_precondition()->set_valid_use_count(1000);
+  ok_response.mutable_precondition()
+      ->mutable_route_directive()
+      ->set_direct_response_code(302);
   result.SetResponse(Status::OK, attributes_, ok_response);
   EXPECT_OK(result.status());
 
@@ -139,6 +144,7 @@ TEST_F(CheckCacheTest, TestCheckResult) {
     cache_->Check(attributes_, &result);
     EXPECT_TRUE(result.IsCacheHit());
     EXPECT_OK(result.status());
+    EXPECT_EQ(result.route_directive().direct_response_code(), 302);
   }
 }
 
@@ -315,6 +321,72 @@ TEST_F(CheckCacheTest, TestTwoReferenced) {
   CheckCache::CheckResult result3;
   cache_->Check(attributes1, &result3);
   EXPECT_TRUE(result3.IsCacheHit());
+}
+
+TEST_F(CheckCacheTest, TestTwoRequestHeaderMaps) {
+  CheckResponse denied_response;
+  denied_response.mutable_precondition()->set_valid_use_count(1000);
+  denied_response.mutable_precondition()->mutable_status()->set_code(
+      Code::PERMISSION_DENIED);
+  auto match = denied_response.mutable_precondition()
+                   ->mutable_referenced_attributes()
+                   ->add_attribute_matches();
+  match->set_condition(ReferencedAttributes::EXACT);
+  match->set_name(15);    // request.headers is used.
+  match->set_map_key(2);  // sub map key is "source.name"
+
+  Attributes attributes1;
+  utils::AttributesBuilder(&attributes1)
+      .AddStringMap("request.headers",
+                    {{"source.ip", "foo"}, {"source.name", "baz"}});
+
+  CheckCache::CheckResult result;
+  cache_->Check(attributes1, &result);
+  EXPECT_FALSE(result.IsCacheHit());
+
+  result.SetResponse(Status::OK, attributes1, denied_response);
+  EXPECT_ERROR_CODE(Code::PERMISSION_DENIED, result.status());
+
+  // Cached response is used.
+  CheckCache::CheckResult result1;
+  cache_->Check(attributes1, &result1);
+  EXPECT_TRUE(result1.IsCacheHit());
+  EXPECT_ERROR_CODE(Code::PERMISSION_DENIED, result1.status());
+
+  Attributes attributes2;
+  utils::AttributesBuilder(&attributes2)
+      .AddStringMap("request.headers",
+                    {{"source.ip", "foo"}, {"source.name", "bar"}});
+
+  // Not in the cache since it has different value
+  CheckCache::CheckResult result2;
+  cache_->Check(attributes2, &result2);
+  EXPECT_FALSE(result2.IsCacheHit());
+
+  CheckResponse ok_response;
+  ok_response.mutable_precondition()->set_valid_use_count(1000);
+  auto match2 = ok_response.mutable_precondition()
+                    ->mutable_referenced_attributes()
+                    ->add_attribute_matches();
+  match2->set_condition(ReferencedAttributes::EXACT);
+  match2->set_name(15);    // request.headers is used.
+  match2->set_map_key(2);  // sub map key is "source.name"
+
+  // Store the response to the cache
+  result2.SetResponse(Status::OK, attributes2, ok_response);
+  EXPECT_OK(result2.status());
+
+  // Now it should be in the cache.
+  CheckCache::CheckResult result3;
+  cache_->Check(attributes2, &result3);
+  EXPECT_TRUE(result3.IsCacheHit());
+  EXPECT_OK(result3.status());
+
+  // Also make sure key1 still in the cache
+  CheckCache::CheckResult result4;
+  cache_->Check(attributes1, &result4);
+  EXPECT_TRUE(result4.IsCacheHit());
+  EXPECT_ERROR_CODE(Code::PERMISSION_DENIED, result4.status());
 }
 
 }  // namespace mixerclient

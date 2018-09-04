@@ -39,6 +39,17 @@ class ReportData {
     std::chrono::nanoseconds duration;
   };
   virtual void GetReportInfo(ReportInfo* info) const = 0;
+
+  // Get upstream host UID. This value overrides the value in the report bag.
+  virtual bool GetDestinationUID(std::string* uid) const = 0;
+
+  // ConnectionEvent is used to indicates the tcp connection event in Report
+  // call.
+  enum ConnectionEvent {
+    OPEN = 0,
+    CLOSE,
+    CONTINUE,
+  };
 };
 
 }  // namespace tcp

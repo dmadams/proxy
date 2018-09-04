@@ -18,10 +18,11 @@
 #include "google/protobuf/text_format.h"
 #include "google/protobuf/util/message_differencer.h"
 #include "gtest/gtest.h"
+#include "include/istio/utils/attribute_names.h"
 #include "include/istio/utils/attributes_builder.h"
-#include "src/istio/control/attribute_names.h"
 #include "src/istio/control/tcp/mock_check_data.h"
 #include "src/istio/control/tcp/mock_report_data.h"
+#include "src/istio/utils/utils.h"
 
 using ::google::protobuf::TextFormat;
 using ::google::protobuf::util::MessageDifferencer;
@@ -56,21 +57,45 @@ attributes {
   }
 }
 attributes {
+  key: "origin.ip"
+  value {
+    bytes_value: "1.2.3.4"
+  }
+}
+attributes {
   key: "connection.mtls"
   value {
     bool_value: true
   }
 }
 attributes {
-  key: "source.port"
+  key: "connection.requested_server_name"
   value {
-    int64_value: 8080
+    string_value: "www.google.com"
+  }
+}
+attributes {
+  key: "source.namespace"
+  value {
+    string_value: "ns_ns"
+  }
+}
+attributes {
+  key: "source.principal"
+  value {
+    string_value: "cluster.local/sa/test_user/ns/ns_ns/"
   }
 }
 attributes {
   key: "source.user"
   value {
-    string_value: "test_user"
+    string_value: "cluster.local/sa/test_user/ns/ns_ns/"
+  }
+}
+attributes {
+  key: "destination.principal"
+  value {
+    string_value: "destination_user"
   }
 }
 attributes {
@@ -81,7 +106,71 @@ attributes {
 }
 )";
 
+const char kFirstReportAttributes[] = R"(
+attributes {
+  key: "connection.event"
+  value {
+    string_value: "open"
+  }
+}
+attributes {
+  key: "connection.received.bytes"
+  value {
+    int64_value: 0
+  }
+}
+attributes {
+  key: "connection.received.bytes_total"
+  value {
+    int64_value: 0
+  }
+}
+attributes {
+  key: "connection.sent.bytes"
+  value {
+    int64_value: 0
+  }
+}
+attributes {
+  key: "connection.sent.bytes_total"
+  value {
+    int64_value: 0
+  }
+}
+attributes {
+  key: "context.time"
+  value {
+    timestamp_value {
+    }
+  }
+}
+attributes {
+  key: "destination.ip"
+  value {
+    bytes_value: "1.2.3.4"
+  }
+}
+attributes {
+  key: "destination.port"
+  value {
+    int64_value: 8080
+  }
+}
+attributes {
+  key: "destination.uid"
+  value {
+    string_value: "pod1.ns2"
+  }
+}
+)";
+
 const char kReportAttributes[] = R"(
+attributes {
+  key: "connection.event"
+  value {
+    string_value: "close"
+  }
+}
 attributes {
   key: "check.error_code"
   value {
@@ -98,7 +187,7 @@ attributes {
   key: "connection.duration"
   value {
     duration_value {
-      nanos: 3
+      nanos: 4
     }
   }
 }
@@ -145,9 +234,21 @@ attributes {
     int64_value: 8080
   }
 }
+attributes {
+  key: "destination.uid"
+  value {
+    string_value: "pod1.ns2"
+  }
+}
 )";
 
 const char kDeltaOneReportAttributes[] = R"(
+attributes {
+  key: "connection.event"
+  value {
+    string_value: "continue"
+  }
+}
 attributes {
   key: "connection.received.bytes"
   value {
@@ -191,9 +292,21 @@ attributes {
     int64_value: 8080
   }
 }
+attributes {
+  key: "destination.uid"
+  value {
+    string_value: "pod1.ns2"
+  }
+}
 )";
 
 const char kDeltaTwoReportAttributes[] = R"(
+attributes {
+  key: "connection.event"
+  value {
+    string_value: "continue"
+  }
+}
 attributes {
   key: "connection.received.bytes"
   value {
@@ -237,13 +350,19 @@ attributes {
     int64_value: 8080
   }
 }
+attributes {
+  key: "destination.uid"
+  value {
+    string_value: "pod1.ns2"
+  }
+}
 )";
 
 void ClearContextTime(RequestContext* request) {
   // Override timestamp with -
   utils::AttributesBuilder builder(&request->attributes);
   std::chrono::time_point<std::chrono::system_clock> time0;
-  builder.AddTimestamp(AttributeName::kContextTime, time0);
+  builder.AddTimestamp(utils::AttributeName::kContextTime, time0);
 }
 
 TEST(AttributesBuilderTest, TestCheckAttributes) {
@@ -254,15 +373,24 @@ TEST(AttributesBuilderTest, TestCheckAttributes) {
         *port = 8080;
         return true;
       }));
-  EXPECT_CALL(mock_data, IsMutualTLS())
-      .WillOnce(Invoke([]() -> bool { return true; }));
-  EXPECT_CALL(mock_data, GetSourceUser(_))
-      .WillOnce(Invoke([](std::string* user) -> bool {
-        *user = "test_user";
+  EXPECT_CALL(mock_data, IsMutualTLS()).WillOnce(Invoke([]() -> bool {
+    return true;
+  }));
+  EXPECT_CALL(mock_data, GetPrincipal(_, _))
+      .WillRepeatedly(Invoke([](bool peer, std::string* user) -> bool {
+        if (peer) {
+          *user = "cluster.local/sa/test_user/ns/ns_ns/";
+        } else {
+          *user = "destination_user";
+        }
         return true;
       }));
   EXPECT_CALL(mock_data, GetConnectionId()).WillOnce(Return("1234-5"));
-
+  EXPECT_CALL(mock_data, GetRequestedServerName(_))
+      .WillOnce(Invoke([](std::string* name) -> bool {
+        *name = "www.google.com";
+        return true;
+      }));
   RequestContext request;
   AttributesBuilder builder(&request);
   builder.ExtractCheckAttributes(&mock_data);
@@ -283,28 +411,39 @@ TEST(AttributesBuilderTest, TestCheckAttributes) {
 TEST(AttributesBuilderTest, TestReportAttributes) {
   ::testing::NiceMock<MockReportData> mock_data;
   EXPECT_CALL(mock_data, GetDestinationIpPort(_, _))
-      .Times(3)
+      .Times(4)
       .WillRepeatedly(Invoke([](std::string* ip, int* port) -> bool {
         *ip = "1.2.3.4";
         *port = 8080;
         return true;
       }));
+  EXPECT_CALL(mock_data, GetDestinationUID(_))
+      .Times(4)
+      .WillRepeatedly(Invoke([](std::string* uid) -> bool {
+        *uid = "pod1.ns2";
+        return true;
+      }));
   EXPECT_CALL(mock_data, GetReportInfo(_))
-      .Times(3)
+      .Times(4)
+      .WillOnce(Invoke([](ReportData::ReportInfo* info) {
+        info->received_bytes = 0;
+        info->send_bytes = 0;
+        info->duration = std::chrono::nanoseconds(1);
+      }))
       .WillOnce(Invoke([](ReportData::ReportInfo* info) {
         info->received_bytes = 100;
         info->send_bytes = 200;
-        info->duration = std::chrono::nanoseconds(1);
+        info->duration = std::chrono::nanoseconds(2);
       }))
       .WillOnce(Invoke([](ReportData::ReportInfo* info) {
         info->received_bytes = 201;
         info->send_bytes = 404;
-        info->duration = std::chrono::nanoseconds(2);
+        info->duration = std::chrono::nanoseconds(3);
       }))
       .WillOnce(Invoke([](ReportData::ReportInfo* info) {
         info->received_bytes = 345;
         info->send_bytes = 678;
-        info->duration = std::chrono::nanoseconds(3);
+        info->duration = std::chrono::nanoseconds(4);
       }));
 
   RequestContext request;
@@ -314,12 +453,28 @@ TEST(AttributesBuilderTest, TestReportAttributes) {
 
   ReportData::ReportInfo last_report_info{0ULL, 0ULL,
                                           std::chrono::nanoseconds::zero()};
-  // Verify delta one report
-  builder.ExtractReportAttributes(&mock_data, /* is_final_report */ false,
+  // Verify first open report
+  builder.ExtractReportAttributes(&mock_data, ReportData::ConnectionEvent::OPEN,
                                   &last_report_info);
   ClearContextTime(&request);
 
   std::string out_str;
+  TextFormat::PrintToString(request.attributes, &out_str);
+  GOOGLE_LOG(INFO) << "===" << out_str << "===";
+
+  ::istio::mixer::v1::Attributes expected_open_attributes;
+  ASSERT_TRUE(TextFormat::ParseFromString(kFirstReportAttributes,
+                                          &expected_open_attributes));
+  EXPECT_TRUE(
+      MessageDifferencer::Equals(request.attributes, expected_open_attributes));
+  EXPECT_EQ(0, last_report_info.received_bytes);
+  EXPECT_EQ(0, last_report_info.send_bytes);
+
+  // Verify delta one report
+  builder.ExtractReportAttributes(
+      &mock_data, ReportData::ConnectionEvent::CONTINUE, &last_report_info);
+  ClearContextTime(&request);
+
   TextFormat::PrintToString(request.attributes, &out_str);
   GOOGLE_LOG(INFO) << "===" << out_str << "===";
 
@@ -332,8 +487,8 @@ TEST(AttributesBuilderTest, TestReportAttributes) {
   EXPECT_EQ(200, last_report_info.send_bytes);
 
   // Verify delta two report
-  builder.ExtractReportAttributes(&mock_data, /* is_final_report */ false,
-                                  &last_report_info);
+  builder.ExtractReportAttributes(
+      &mock_data, ReportData::ConnectionEvent::CONTINUE, &last_report_info);
   ClearContextTime(&request);
 
   out_str.clear();
@@ -349,8 +504,8 @@ TEST(AttributesBuilderTest, TestReportAttributes) {
   EXPECT_EQ(404, last_report_info.send_bytes);
 
   // Verify final report
-  builder.ExtractReportAttributes(&mock_data, /* is_final_report */ true,
-                                  &last_report_info);
+  builder.ExtractReportAttributes(
+      &mock_data, ReportData::ConnectionEvent::CLOSE, &last_report_info);
   ClearContextTime(&request);
 
   out_str.clear();

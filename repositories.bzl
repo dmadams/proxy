@@ -113,8 +113,7 @@ cc_library(
             actual = "@googletest_git//:googletest_prod",
         )
 
-
-ISTIO_API = "e07972e35d89890e2bad2c9e774fd6517c14ea02"
+ISTIO_API = "214c7598afb74f7f4dea49f77e45832c49382a15"
 
 def mixerapi_repositories(bind=True):
     BUILD = """
@@ -167,9 +166,23 @@ cc_proto_library(
 cc_proto_library(
     name = "authentication_policy_config_cc_proto",
     srcs = glob(
-        ["authentication/v1alpha1/*.proto",
-         "routing/v1alpha2/*.proto",
+        ["envoy/config/filter/http/authn/v2alpha1/*.proto",
+         "authentication/v1alpha1/*.proto",
+         "common/v1alpha1/*.proto",
         ],
+    ),
+    default_runtime = "//external:protobuf",
+    protoc = "//external:protoc",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//external:cc_gogoproto",
+    ],
+)
+
+cc_proto_library(
+    name = "jwt_auth_config_cc_proto",
+    srcs = glob(
+        ["envoy/config/filter/http/jwt_auth/v2alpha1/*.proto", ],
     ),
     default_runtime = "//external:protobuf",
     protoc = "//external:protoc",
@@ -204,6 +217,10 @@ filegroup(
         native.bind(
             name = "authentication_policy_config_cc_proto",
             actual = "@mixerapi_git//:authentication_policy_config_cc_proto",
+        )
+        native.bind(
+            name = "jwt_auth_config_cc_proto",
+            actual = "@mixerapi_git//:jwt_auth_config_cc_proto",
         )
 
 load(":protobuf.bzl", "protobuf_repositories")

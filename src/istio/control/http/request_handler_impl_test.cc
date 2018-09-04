@@ -15,7 +15,7 @@
 
 #include "google/protobuf/text_format.h"
 #include "gtest/gtest.h"
-#include "src/istio/control/attribute_names.h"
+#include "include/istio/utils/attribute_names.h"
 #include "src/istio/control/http/client_context.h"
 #include "src/istio/control/http/controller_impl.h"
 #include "src/istio/control/http/mock_check_data.h"
@@ -25,12 +25,14 @@
 using ::google::protobuf::TextFormat;
 using ::google::protobuf::util::Status;
 using ::istio::mixer::v1::Attributes;
-using ::istio::mixer::v1::config::client::ServiceConfig;
 using ::istio::mixer::v1::config::client::HttpClientConfig;
+using ::istio::mixer::v1::config::client::ServiceConfig;
 using ::istio::mixerclient::CancelFunc;
-using ::istio::mixerclient::TransportCheckFunc;
+using ::istio::mixerclient::CheckDoneFunc;
+using ::istio::mixerclient::CheckResponseInfo;
 using ::istio::mixerclient::DoneFunc;
 using ::istio::mixerclient::MixerClient;
+using ::istio::mixerclient::TransportCheckFunc;
 using ::istio::quota_config::Requirement;
 
 using ::testing::_;
@@ -53,12 +55,28 @@ service_configs {
         }
       }
     }
+    forward_attributes {
+      attributes {
+        key: "source-key-override"
+        value {
+          string_value: "service-value"
+        }
+      }
+    }
   }
 }
 default_destination_service: ":default"
 mixer_attributes {
   attributes {
     key: "global-key"
+    value {
+      string_value: "global-value"
+    }
+  }
+}
+forward_attributes {
+  attributes {
+    key: "source-key-override"
     value {
       string_value: "global-value"
     }
@@ -132,7 +150,7 @@ TEST_F(RequestHandlerImplTest, TestHandlerDisabledCheckReport) {
   ::testing::NiceMock<MockHeaderUpdate> mock_header;
   // Not to extract attributes since both Check and Report are disabled.
   EXPECT_CALL(mock_data, GetSourceIpPort(_, _)).Times(0);
-  EXPECT_CALL(mock_data, GetSourceUser(_)).Times(0);
+  EXPECT_CALL(mock_data, GetPrincipal(_, _)).Times(0);
 
   // Check should NOT be called.
   EXPECT_CALL(*mock_client_, Check(_, _, _, _)).Times(0);
@@ -145,7 +163,9 @@ TEST_F(RequestHandlerImplTest, TestHandlerDisabledCheckReport) {
 
   auto handler = controller_->CreateRequestHandler(per_route);
   handler->Check(&mock_data, &mock_header, nullptr,
-                 [](const Status& status) { EXPECT_TRUE(status.ok()); });
+                 [](const CheckResponseInfo& info) {
+                   EXPECT_TRUE(info.response_status.ok());
+                 });
 }
 
 TEST_F(RequestHandlerImplTest, TestHandlerDisabledCheck) {
@@ -153,7 +173,7 @@ TEST_F(RequestHandlerImplTest, TestHandlerDisabledCheck) {
   ::testing::NiceMock<MockHeaderUpdate> mock_header;
   // Report is enabled so Attributes are extracted.
   EXPECT_CALL(mock_data, GetSourceIpPort(_, _)).Times(1);
-  EXPECT_CALL(mock_data, GetSourceUser(_)).Times(1);
+  EXPECT_CALL(mock_data, GetPrincipal(_, _)).Times(2);
 
   // Check should NOT be called.
   EXPECT_CALL(*mock_client_, Check(_, _, _, _)).Times(0);
@@ -165,21 +185,23 @@ TEST_F(RequestHandlerImplTest, TestHandlerDisabledCheck) {
 
   auto handler = controller_->CreateRequestHandler(per_route);
   handler->Check(&mock_data, &mock_header, nullptr,
-                 [](const Status& status) { EXPECT_TRUE(status.ok()); });
+                 [](const CheckResponseInfo& info) {
+                   EXPECT_TRUE(info.response_status.ok());
+                 });
 }
 
 TEST_F(RequestHandlerImplTest, TestPerRouteAttributes) {
   ::testing::NiceMock<MockCheckData> mock_data;
   ::testing::NiceMock<MockHeaderUpdate> mock_header;
   EXPECT_CALL(mock_data, GetSourceIpPort(_, _)).Times(1);
-  EXPECT_CALL(mock_data, GetSourceUser(_)).Times(1);
+  EXPECT_CALL(mock_data, GetPrincipal(_, _)).Times(2);
 
   // Check should be called.
   EXPECT_CALL(*mock_client_, Check(_, _, _, _))
       .WillOnce(Invoke([](const Attributes& attributes,
                           const std::vector<Requirement>& quotas,
                           TransportCheckFunc transport,
-                          DoneFunc on_done) -> CancelFunc {
+                          CheckDoneFunc on_done) -> CancelFunc {
         auto map = attributes.attributes();
         EXPECT_EQ(map["global-key"].string_value(), "global-value");
         EXPECT_EQ(map["per-route-key"].string_value(), "per-route-value");
@@ -200,21 +222,30 @@ TEST_F(RequestHandlerImplTest, TestDefaultRouteAttributes) {
   ::testing::NiceMock<MockCheckData> mock_data;
   ::testing::NiceMock<MockHeaderUpdate> mock_header;
   EXPECT_CALL(mock_data, GetSourceIpPort(_, _)).Times(1);
-  EXPECT_CALL(mock_data, GetSourceUser(_)).Times(1);
+  EXPECT_CALL(mock_data, GetPrincipal(_, _)).Times(2);
 
   // Check should be called.
   EXPECT_CALL(*mock_client_, Check(_, _, _, _))
       .WillOnce(Invoke([](const Attributes& attributes,
                           const std::vector<Requirement>& quotas,
                           TransportCheckFunc transport,
-                          DoneFunc on_done) -> CancelFunc {
+                          CheckDoneFunc on_done) -> CancelFunc {
         auto map = attributes.attributes();
         EXPECT_EQ(map["global-key"].string_value(), "global-value");
         EXPECT_EQ(map["route0-key"].string_value(), "route0-value");
         return nullptr;
       }));
 
-  // destionation.server is empty, will use default one
+  // Attribute is forwarded: route override
+  EXPECT_CALL(mock_header, AddIstioAttributes(_))
+      .WillOnce(Invoke([](const std::string& data) {
+        Attributes forwarded_attr;
+        EXPECT_TRUE(forwarded_attr.ParseFromString(data));
+        auto map = forwarded_attr.attributes();
+        EXPECT_EQ(map["source-key-override"].string_value(), "service-value");
+      }));
+
+  // destination.server is empty, will use default one
   Controller::PerRouteConfig config;
   auto handler = controller_->CreateRequestHandler(config);
   handler->Check(&mock_data, &mock_header, nullptr, nullptr);
@@ -224,11 +255,12 @@ TEST_F(RequestHandlerImplTest, TestRouteAttributes) {
   ::testing::NiceMock<MockCheckData> mock_data;
   ::testing::NiceMock<MockHeaderUpdate> mock_header;
   EXPECT_CALL(mock_data, GetSourceIpPort(_, _)).Times(1);
-  EXPECT_CALL(mock_data, GetSourceUser(_)).Times(1);
+  EXPECT_CALL(mock_data, GetPrincipal(_, _)).Times(2);
 
   ServiceConfig route_config;
   auto map3 = route_config.mutable_mixer_attributes()->mutable_attributes();
   (*map3)["route1-key"].set_string_value("route1-value");
+  (*map3)["global-key"].set_string_value("service-value");
   SetServiceConfig("route1", route_config);
 
   // Check should be called.
@@ -236,14 +268,22 @@ TEST_F(RequestHandlerImplTest, TestRouteAttributes) {
       .WillOnce(Invoke([](const Attributes& attributes,
                           const std::vector<Requirement>& quotas,
                           TransportCheckFunc transport,
-                          DoneFunc on_done) -> CancelFunc {
+                          CheckDoneFunc on_done) -> CancelFunc {
         auto map = attributes.attributes();
-        EXPECT_EQ(map["global-key"].string_value(), "global-value");
+        EXPECT_EQ(map["global-key"].string_value(), "service-value");
         EXPECT_EQ(map["route1-key"].string_value(), "route1-value");
         return nullptr;
       }));
 
-  // destionation.server is empty, will use default one
+  // Attribute is forwarded: global
+  EXPECT_CALL(mock_header, AddIstioAttributes(_))
+      .WillOnce(Invoke([](const std::string& data) {
+        Attributes forwarded_attr;
+        EXPECT_TRUE(forwarded_attr.ParseFromString(data));
+        auto map = forwarded_attr.attributes();
+        EXPECT_EQ(map["source-key-override"].string_value(), "global-value");
+      }));
+
   Controller::PerRouteConfig config;
   config.destination_service = "route1";
   auto handler = controller_->CreateRequestHandler(config);
@@ -259,7 +299,7 @@ TEST_F(RequestHandlerImplTest, TestPerRouteQuota) {
       .WillOnce(Invoke([](const Attributes& attributes,
                           const std::vector<Requirement>& quotas,
                           TransportCheckFunc transport,
-                          DoneFunc on_done) -> CancelFunc {
+                          CheckDoneFunc on_done) -> CancelFunc {
         auto map = attributes.attributes();
         EXPECT_EQ(map["global-key"].string_value(), "global-value");
         EXPECT_EQ(quotas.size(), 1);
@@ -301,7 +341,7 @@ TEST_F(RequestHandlerImplTest, TestPerRouteApiSpec) {
       .WillOnce(Invoke([](const Attributes& attributes,
                           const std::vector<Requirement>& quotas,
                           TransportCheckFunc transport,
-                          DoneFunc on_done) -> CancelFunc {
+                          CheckDoneFunc on_done) -> CancelFunc {
         auto map = attributes.attributes();
         EXPECT_EQ(map["global-key"].string_value(), "global-value");
         EXPECT_EQ(map["api.name"].string_value(), "test-name");
@@ -330,7 +370,7 @@ TEST_F(RequestHandlerImplTest, TestHandlerCheck) {
   ::testing::NiceMock<MockCheckData> mock_data;
   ::testing::NiceMock<MockHeaderUpdate> mock_header;
   EXPECT_CALL(mock_data, GetSourceIpPort(_, _)).Times(1);
-  EXPECT_CALL(mock_data, GetSourceUser(_)).Times(1);
+  EXPECT_CALL(mock_data, GetPrincipal(_, _)).Times(2);
 
   // Check should be called.
   EXPECT_CALL(*mock_client_, Check(_, _, _, _)).Times(1);
@@ -361,9 +401,9 @@ TEST_F(RequestHandlerImplTest, TestDefaultApiKey) {
       .WillOnce(Invoke([](const Attributes& attributes,
                           const std::vector<Requirement>& quotas,
                           TransportCheckFunc transport,
-                          DoneFunc on_done) -> CancelFunc {
+                          CheckDoneFunc on_done) -> CancelFunc {
         auto map = attributes.attributes();
-        EXPECT_EQ(map[AttributeName::kRequestApiKey].string_value(),
+        EXPECT_EQ(map[utils::AttributeName::kRequestApiKey].string_value(),
                   "test-api-key");
         return nullptr;
       }));
@@ -414,7 +454,7 @@ TEST_F(RequestHandlerImplTest, TestEmptyConfig) {
   ::testing::NiceMock<MockHeaderUpdate> mock_header;
   // Not to extract attributes since both Check and Report are disabled.
   EXPECT_CALL(mock_check, GetSourceIpPort(_, _)).Times(0);
-  EXPECT_CALL(mock_check, GetSourceUser(_)).Times(0);
+  EXPECT_CALL(mock_check, GetPrincipal(_, _)).Times(0);
 
   // Attributes is forwarded.
   EXPECT_CALL(mock_header, AddIstioAttributes(_))
@@ -438,7 +478,9 @@ TEST_F(RequestHandlerImplTest, TestEmptyConfig) {
   Controller::PerRouteConfig config;
   auto handler = controller_->CreateRequestHandler(config);
   handler->Check(&mock_check, &mock_header, nullptr,
-                 [](const Status& status) { EXPECT_TRUE(status.ok()); });
+                 [](const CheckResponseInfo& info) {
+                   EXPECT_TRUE(info.response_status.ok());
+                 });
   handler->Report(&mock_report);
 }
 

@@ -18,6 +18,7 @@
 #include "src/envoy/utils/utils.h"
 
 using ::google::protobuf::util::Status;
+using ::istio::mixerclient::CheckResponseInfo;
 
 namespace Envoy {
 namespace Tcp {
@@ -59,8 +60,9 @@ void Filter::callCheck() {
   state_ = State::Calling;
   filter_callbacks_->connection().readDisable(true);
   calling_check_ = true;
-  cancel_check_ = handler_->Check(
-      this, [this](const Status& status) { completeCheck(status); });
+  cancel_check_ = handler_->Check(this, [this](const CheckResponseInfo& info) {
+    completeCheck(info.response_status);
+  });
   calling_check_ = false;
 }
 
@@ -115,6 +117,7 @@ void Filter::completeCheck(const Status& status) {
     if (!calling_check_) {
       filter_callbacks_->continueReading();
     }
+    handler_->Report(this, ConnectionEvent::OPEN);
     report_timer_ =
         control_.dispatcher().createTimer([this]() { OnReportTimer(); });
     report_timer_->enableTimer(control_.config().report_interval_ms());
@@ -137,7 +140,7 @@ void Filter::onEvent(Network::ConnectionEvent event) {
       if (report_timer_) {
         report_timer_->disableTimer();
       }
-      handler_->Report(this, /* is_final_report */ true);
+      handler_->Report(this, ConnectionEvent::CLOSE);
     }
     cancelCheck();
   }
@@ -147,12 +150,16 @@ bool Filter::GetSourceIpPort(std::string* str_ip, int* port) const {
   return Utils::GetIpPort(filter_callbacks_->connection().remoteAddress()->ip(),
                           str_ip, port);
 }
-bool Filter::GetSourceUser(std::string* user) const {
-  return Utils::GetSourceUser(&filter_callbacks_->connection(), user);
+bool Filter::GetPrincipal(bool peer, std::string* user) const {
+  return Utils::GetPrincipal(&filter_callbacks_->connection(), peer, user);
 }
 
 bool Filter::IsMutualTLS() const {
   return Utils::IsMutualTLS(&filter_callbacks_->connection());
+}
+
+bool Filter::GetRequestedServerName(std::string* name) const {
+  return Utils::GetRequestedServerName(&filter_callbacks_->connection(), name);
 }
 
 bool Filter::GetDestinationIpPort(std::string* str_ip, int* port) const {
@@ -160,6 +167,13 @@ bool Filter::GetDestinationIpPort(std::string* str_ip, int* port) const {
       filter_callbacks_->upstreamHost()->address()) {
     return Utils::GetIpPort(filter_callbacks_->upstreamHost()->address()->ip(),
                             str_ip, port);
+  }
+  return false;
+}
+bool Filter::GetDestinationUID(std::string* uid) const {
+  if (filter_callbacks_->upstreamHost()) {
+    return Utils::GetDestinationUID(
+        *filter_callbacks_->upstreamHost()->metadata(), uid);
   }
   return false;
 }
@@ -180,7 +194,7 @@ std::string Filter::GetConnectionId() const {
 }
 
 void Filter::OnReportTimer() {
-  handler_->Report(this, /* is_final_report */ false);
+  handler_->Report(this, ConnectionEvent::CONTINUE);
   report_timer_->enableTimer(control_.config().report_interval_ms());
 }
 

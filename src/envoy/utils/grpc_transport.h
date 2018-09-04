@@ -38,15 +38,15 @@ class GrpcTransport : public Grpc::TypedAsyncRequestCallbacks<ResponseType>,
       const RequestType& request, ResponseType* response,
       istio::mixerclient::DoneFunc on_done)>;
 
-  static Func GetFunc(Upstream::ClusterManager& cm,
-                      const std::string& cluster_name,
-                      const Http::HeaderMap* headers = nullptr);
+  static Func GetFunc(Grpc::AsyncClientFactory& factory,
+                      Tracing::Span& parent_span,
+                      const std::string& serialized_forward_attributes);
 
   GrpcTransport(Grpc::AsyncClientPtr async_client, const RequestType& request,
-                const Http::HeaderMap* headers, ResponseType* response,
+                ResponseType* response, Tracing::Span& parent_span,
+                const std::string& serialized_forward_attributes,
                 istio::mixerclient::DoneFunc on_done);
 
-  // Grpc::AsyncRequestCallbacks<ResponseType>
   void onCreateInitialMetadata(Http::HeaderMap& metadata) override;
 
   void onSuccess(std::unique_ptr<ResponseType>&& response,
@@ -61,8 +61,8 @@ class GrpcTransport : public Grpc::TypedAsyncRequestCallbacks<ResponseType>,
   static const google::protobuf::MethodDescriptor& descriptor();
 
   Grpc::AsyncClientPtr async_client_;
-  const Http::HeaderMap* headers_;
   ResponseType* response_;
+  const std::string& serialized_forward_attributes_;
   ::istio::mixerclient::DoneFunc on_done_;
   Grpc::AsyncRequest* request_{};
 };

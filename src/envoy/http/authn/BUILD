@@ -20,23 +20,150 @@ package(default_visibility = ["//visibility:public"])
 load(
     "@envoy//bazel:envoy_build_system.bzl",
     "envoy_cc_library",
+    "envoy_cc_test",
+    "envoy_cc_test_library",
+)
+
+envoy_cc_library(
+    name = "authenticator",
+    srcs = [
+        "authenticator_base.cc",
+        "authn_utils.cc",
+        "filter_context.cc",
+        "origin_authenticator.cc",
+        "peer_authenticator.cc",
+    ],
+    hdrs = [
+        "authenticator_base.h",
+        "authn_utils.h",
+        "filter_context.h",
+        "origin_authenticator.h",
+        "peer_authenticator.h",
+    ],
+    repository = "@envoy",
+    deps = [
+        "//external:authentication_policy_config_cc_proto",
+        "//src/envoy/http/jwt_auth:jwt_lib",
+        "//src/envoy/utils:utils_lib",
+        "//src/istio/authn:context_proto",
+        "//src/envoy/utils:filter_names_lib",
+    ],
 )
 
 envoy_cc_library(
     name = "filter_lib",
     srcs = [
-        "http_filter_factory.cc",
         "http_filter.cc",
-        "mtls_authentication.cc",
+        "http_filter_factory.cc",
     ],
     hdrs = [
         "http_filter.h",
-        "mtls_authentication.h"
     ],
     repository = "@envoy",
     deps = [
+        ":authenticator",
         "//external:authentication_policy_config_cc_proto",
+        "//src/envoy/utils:authn_lib",
         "//src/envoy/utils:utils_lib",
+        "//src/istio/authn:context_proto",
         "@envoy//source/exe:envoy_common_lib",
+        "//src/envoy/utils:filter_names_lib",
+    ],
+)
+
+envoy_cc_test_library(
+    name = "test_utils",
+    hdrs = ["test_utils.h"],
+    repository = "@envoy",
+    deps = [
+        "//src/istio/authn:context_proto",
+    ],
+)
+
+envoy_cc_test(
+    name = "filter_context_test",
+    srcs = ["filter_context_test.cc"],
+    repository = "@envoy",
+    deps = [
+        ":authenticator",
+        ":test_utils",
+        "@envoy//test/mocks/http:http_mocks",
+        "@envoy//test/test_common:utility_lib",
+    ],
+)
+
+envoy_cc_test(
+    name = "authenticator_base_test",
+    srcs = ["authenticator_base_test.cc"],
+    repository = "@envoy",
+    deps = [
+        ":authenticator",
+        ":test_utils",
+        "@envoy//test/mocks/network:network_mocks",
+        "//src/envoy/utils:filter_names_lib",
+        "@envoy//test/mocks/ssl:ssl_mocks",
+        "@envoy//test/test_common:utility_lib",
+    ],
+)
+
+envoy_cc_test(
+    name = "authn_utils_test",
+    srcs = ["authn_utils_test.cc"],
+    repository = "@envoy",
+    deps = [
+        ":authenticator",
+        ":test_utils",
+        "@envoy//test/test_common:utility_lib",
+    ],
+)
+
+envoy_cc_test(
+    name = "peer_authenticator_test",
+    srcs = ["peer_authenticator_test.cc"],
+    repository = "@envoy",
+    deps = [
+        ":authenticator",
+        ":test_utils",
+        "@envoy//test/mocks/http:http_mocks",
+        "@envoy//test/test_common:utility_lib",
+    ],
+)
+
+envoy_cc_test(
+    name = "origin_authenticator_test",
+    srcs = ["origin_authenticator_test.cc"],
+    repository = "@envoy",
+    deps = [
+        ":authenticator",
+        ":test_utils",
+        "@envoy//test/mocks/http:http_mocks",
+        "@envoy//test/test_common:utility_lib",
+    ],
+)
+
+envoy_cc_test(
+    name = "http_filter_test",
+    srcs = ["http_filter_test.cc"],
+    repository = "@envoy",
+    deps = [
+        ":filter_lib",
+        ":test_utils",
+        "//external:authentication_policy_config_cc_proto",
+        "@envoy//source/common/http:header_map_lib",
+        "@envoy//test/mocks/http:http_mocks",
+        "@envoy//test/test_common:utility_lib",
+    ],
+)
+
+envoy_cc_test(
+    name = "http_filter_integration_test",
+    srcs = ["http_filter_integration_test.cc"],
+    data = glob(["testdata/*"]),
+    repository = "@envoy",
+    deps = [
+        ":filter_lib",
+        "@envoy//source/common/common:utility_lib",
+        "@envoy//test/integration:http_protocol_integration_lib",
+        "//src/envoy/utils:filter_names_lib",
     ],
 )

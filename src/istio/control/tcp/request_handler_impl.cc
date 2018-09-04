@@ -18,7 +18,8 @@
 
 using ::google::protobuf::util::Status;
 using ::istio::mixerclient::CancelFunc;
-using ::istio::mixerclient::DoneFunc;
+using ::istio::mixerclient::CheckDoneFunc;
+using ::istio::mixerclient::CheckResponseInfo;
 using ::istio::quota_config::Requirement;
 
 namespace istio {
@@ -30,7 +31,8 @@ RequestHandlerImpl::RequestHandlerImpl(
     : client_context_(client_context),
       last_report_info_{0ULL, 0ULL, std::chrono::nanoseconds::zero()} {}
 
-CancelFunc RequestHandlerImpl::Check(CheckData* check_data, DoneFunc on_done) {
+CancelFunc RequestHandlerImpl::Check(CheckData* check_data,
+                                     CheckDoneFunc on_done) {
   if (client_context_->enable_mixer_check() ||
       client_context_->enable_mixer_report()) {
     client_context_->AddStaticAttributes(&request_context_);
@@ -40,7 +42,9 @@ CancelFunc RequestHandlerImpl::Check(CheckData* check_data, DoneFunc on_done) {
   }
 
   if (!client_context_->enable_mixer_check()) {
-    on_done(Status::OK);
+    CheckResponseInfo check_response_info;
+    check_response_info.response_status = Status::OK;
+    on_done(check_response_info);
     return nullptr;
   }
 
@@ -49,19 +53,14 @@ CancelFunc RequestHandlerImpl::Check(CheckData* check_data, DoneFunc on_done) {
   return client_context_->SendCheck(nullptr, on_done, &request_context_);
 }
 
-// Make remote report call.
-void RequestHandlerImpl::Report(ReportData* report_data) {
-  Report(report_data, /* is_final_report */ true);
-}
-
-void RequestHandlerImpl::Report(ReportData* report_data, bool is_final_report) {
+void RequestHandlerImpl::Report(ReportData* report_data,
+                                ReportData::ConnectionEvent event) {
   if (!client_context_->enable_mixer_report()) {
     return;
   }
 
   AttributesBuilder builder(&request_context_);
-  builder.ExtractReportAttributes(report_data, is_final_report,
-                                  &last_report_info_);
+  builder.ExtractReportAttributes(report_data, event, &last_report_info_);
 
   client_context_->SendReport(request_context_);
 }
