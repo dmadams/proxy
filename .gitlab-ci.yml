@@ -1,4 +1,4 @@
-image: istio/ci:go1.9-bazel0.7
+image: istio/ci:go1.9-bazel0.11
 variables:
   GIT_SSL_CAPATH: /etc/ssl/certs/
   BAZEL_TARGET_DIR: "bazel-bin/src/envoy/"
